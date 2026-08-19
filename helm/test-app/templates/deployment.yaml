@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "test-app.fullname" . }}
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "test-app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "test-app.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ include "test-app.serviceAccountName" . }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export PYTHONUSERBASE=/tmp/py HOME=/tmp
+              export PYTHONPATH=/tmp/py/lib/python3.11/site-packages
+              pip install --user --cache-dir /tmp/pip-cache flask boto3 psycopg2-binary
+              python /app/app.py
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DB_ENABLED
+              value: "{{ .Values.database.enabled }}"
+            - name: DB_HOST
+              value: "{{ .Values.database.host }}"
+            - name: DB_NAME
+              value: "{{ .Values.database.name }}"
+            - name: DB_PORT
+              value: "{{ .Values.database.port }}"
+            - name: AWS_REGION
+              value: {{ .Values.region | quote }}
+            - name: DB_SECRET_NAME
+              value: "{{ .Values.database.secretName }}"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: pip-cache
+              mountPath: /tmp/pip-cache
+      volumes:
+        - name: app-code
+          configMap:
+            name: {{ include "test-app.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+        - name: pip-cache
+          emptyDir: {}

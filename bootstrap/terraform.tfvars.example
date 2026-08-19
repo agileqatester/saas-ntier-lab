@@ -1,0 +1,13 @@
+# Example Terraform variables for bootstrap
+# Copy this file to terraform.tfvars and update with your values
+
+aws_region         = "us-east-1"
+state_bucket_name  = "your-org-ntier-app-terraform-state"  # Must be globally unique
+dynamodb_table_name = "terraform-state-locks"
+
+common_tags = {
+  Environment = "shared"
+  Project     = "ntier-app"
+    ManagedBy = "OpenTofu"
+}
+

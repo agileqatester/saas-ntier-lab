@@ -1,0 +1,40 @@
+name: tofu-validate
+
+on:
+  push:
+    paths:
+      - "env/dev/**"
+      - "modules/**"
+      - "bootstrap/**"
+      - ".github/workflows/tofu-validate.yml"
+  pull_request:
+    paths:
+      - "env/dev/**"
+      - "modules/**"
+      - "bootstrap/**"
+      - ".github/workflows/tofu-validate.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - env/dev/network
+          - env/dev/workload
+          - bootstrap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.5
+      - name: fmt
+        working-directory: ${{ matrix.dir }}
+        run: tofu fmt -check -recursive
+      - name: init
+        working-directory: ${{ matrix.dir }}
+        run: tofu init -backend=false
+      - name: validate
+        working-directory: ${{ matrix.dir }}
+        run: tofu validate

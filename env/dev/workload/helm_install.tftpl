@@ -1,0 +1,16 @@
+helm upgrade --install test-app ${chart} --namespace default \
+  --set fullnameOverride=test-app \
+  --set serviceAccount.name=test-app \
+%{ if enable_rds ~}
+  --set-json 'serviceAccount.annotations={"eks.amazonaws.com/role-arn":"${irsa_arn}"}' \
+  --set database.enabled=true \
+  --set database.host=${rds_host} \
+  --set database.secretName=${rds_secret} \
+%{ else ~}
+  --set database.enabled=false \
+%{ endif ~}
+  --set service.type=NodePort \
+  --set service.nodePort=30080 \
+  --set region=${region}
+kubectl -n default rollout status deploy/test-app --timeout=180s
+curl -s ${alb_health}

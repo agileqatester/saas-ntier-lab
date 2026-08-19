@@ -1,0 +1,15 @@
+aws_region  = "us-east-1"
+name_prefix = "ntier-dev"
+vpc_cidr    = "10.0.0.0/16"
+
+nat_instance_type = "t4g.nano"
+
+# Do not put my_ip here. Pass it at apply time (see README).
+kubernetes_version     = "1.35"
+eks_node_instance_type = "t4g.small"
+
+enable_alb = true
+
+# Single switch. false = ALB session (no Postgres). true = RDS + secret + IRSA.
+# After flipping, apply again, then re-run: tofu output -raw helm_install
+enable_rds = false

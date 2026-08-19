@@ -1,0 +1,287 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "test-app.fullname" . }}-config
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+  # trivy:ignore:AVD-KSV-0109 - This ConfigMap contains Python code, not secrets.
+  # The code retrieves secrets from AWS Secrets Manager, it does not store them.
+data:
+  app.py: |
+    import os
+    import json
+    import socket
+    from flask import Flask, request, jsonify
+    
+    app = Flask(__name__)
+    
+    # Database configuration
+    DB_ENABLED = os.getenv('DB_ENABLED', 'false').lower() == 'true'
+    
+    if DB_ENABLED:
+        import boto3
+        import psycopg2
+        from psycopg2 import pool
+        
+        db_pool = None
+        
+        def get_db_credentials():
+            """Get DB credentials from Secrets Manager"""
+            try:
+                secret_name = os.getenv('DB_SECRET_NAME')
+                region = os.getenv('AWS_REGION', 'us-east-1')
+                
+                client = boto3.client('secretsmanager', region_name=region)
+                response = client.get_secret_value(SecretId=secret_name)
+                secret = json.loads(response['SecretString'])
+                return secret
+            except Exception as e:
+                print(f"Error retrieving secret: {e}")
+                return None
+        
+        def init_db_pool():
+            """Initialize database connection pool"""
+            global db_pool
+            try:
+                creds = get_db_credentials()
+                if creds:
+                    db_pool = psycopg2.pool.SimpleConnectionPool(
+                        1, 10,
+                        host=os.getenv('DB_HOST'),
+                        database=os.getenv('DB_NAME', 'postgres'),
+                        user=creds['username'],
+                        password=creds['password'],
+                        port=int(os.getenv('DB_PORT', '5432')),
+                        sslmode='require'
+                    )
+                    print("Database connection pool initialized")
+            except Exception as e:
+                print(f"Error initializing connection pool: {e}")
+        
+        def get_db_connection():
+            """Get connection from the pool"""
+            try:
+                if db_pool is None:
+                    init_db_pool()
+                return db_pool.getconn()
+            except Exception as e:
+                print(f"Error getting connection: {e}")
+                return None
+        
+        def return_db_connection(conn):
+            """Return connection to the pool"""
+            if conn:
+                db_pool.putconn(conn)
+    
+    @app.route('/')
+    def home():
+        """Main endpoint"""
+        return jsonify({
+            'message': 'Test App Running',
+            'hostname': socket.gethostname(),
+            'ip': request.remote_addr,
+            'db_enabled': DB_ENABLED
+        })
+    
+    @app.route('/health')
+    def health():
+        """Health check endpoint"""
+        health_status = {
+            'status': 'healthy',
+            'hostname': socket.gethostname(),
+            'db_enabled': DB_ENABLED
+        }
+        
+        if DB_ENABLED:
+            try:
+                conn = get_db_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT 1;')
+                    cursor.close()
+                    return_db_connection(conn)
+                    health_status['database'] = 'connected'
+                else:
+                    health_status['database'] = 'disconnected'
+            except Exception as e:
+                health_status['database'] = 'disconnected'
+                health_status['db_error'] = str(e)
+        
+        return jsonify(health_status)
+    
+    @app.route('/db/version')
+    def db_version():
+        """Test database connection"""
+        if not DB_ENABLED:
+            return jsonify({'error': 'Database not enabled'}), 400
+        
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT version();')
+            version = cursor.fetchone()
+            cursor.close()
+            return_db_connection(conn)
+            
+            return jsonify({
+                'status': 'success',
+                'db_version': version[0]
+            })
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+    
+    @app.route('/db/init')
+    def init_db():
+        """Initialize sample database table"""
+        if not DB_ENABLED:
+            return jsonify({'error': 'Database not enabled'}), 400
+        
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sample_requests (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    remote_ip INET,
+                    hostname VARCHAR(100),
+                    user_agent TEXT
+                );
+            ''')
+            cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT;')
+            conn.commit()
+            cursor.close()
+            return_db_connection(conn)
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'Database table created successfully'
+            })
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+    
+    @app.route('/db/items', methods=['POST'])
+    def create_item():
+        """Store a JSON message from the client"""
+        if not DB_ENABLED:
+            return jsonify({'error': 'Database not enabled'}), 400
+        body = request.get_json(silent=True) or {}
+        message = body.get('message')
+        if not message or not isinstance(message, str):
+            return jsonify({'error': 'JSON body must include a string "message"'}), 400
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT;')
+            cursor.execute('''
+                INSERT INTO sample_requests (remote_ip, hostname, user_agent, message)
+                VALUES (%s, %s, %s, %s) RETURNING id, timestamp, message;
+            ''', (
+                request.remote_addr,
+                socket.gethostname(),
+                request.headers.get('User-Agent', 'Unknown'),
+                message,
+            ))
+            result = cursor.fetchone()
+            conn.commit()
+            cursor.close()
+            return_db_connection(conn)
+            return jsonify({
+                'status': 'success',
+                'id': result[0],
+                'timestamp': str(result[1]),
+                'message': result[2],
+            }), 201
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    @app.route('/db/log')
+    def log_request():
+        """Log current request to database"""
+        if not DB_ENABLED:
+            return jsonify({'error': 'Database not enabled'}), 400
+        
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO sample_requests (remote_ip, hostname, user_agent)
+                VALUES (%s, %s, %s) RETURNING id, timestamp;
+            ''', (
+                request.remote_addr,
+                socket.gethostname(),
+                request.headers.get('User-Agent', 'Unknown')
+            ))
+            result = cursor.fetchone()
+            conn.commit()
+            cursor.close()
+            return_db_connection(conn)
+            
+            return jsonify({
+                'status': 'success',
+                'id': result[0],
+                'timestamp': str(result[1])
+            })
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+    
+    @app.route('/db/records')
+    def get_records():
+        """Query recent records from database"""
+        if not DB_ENABLED:
+            return jsonify({'error': 'Database not enabled'}), 400
+        
+        try:
+            limit = request.args.get('limit', 10, type=int)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, timestamp, remote_ip, hostname, user_agent, message
+                FROM sample_requests
+                ORDER BY timestamp DESC
+                LIMIT %s;
+            ''', (limit,))
+            rows = cursor.fetchall()
+            cursor.close()
+            return_db_connection(conn)
+            
+            records = [
+                {
+                    'id': row[0],
+                    'timestamp': str(row[1]),
+                    'remote_ip': str(row[2]),
+                    'hostname': row[3],
+                    'user_agent': row[4],
+                    'message': row[5],
+                }
+                for row in rows
+            ]
+            
+            return jsonify({
+                'status': 'success',
+                'count': len(records),
+                'records': records
+            })
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+    
+    if __name__ == '__main__':
+        if DB_ENABLED:
+            print("Starting app with database support enabled")
+            init_db_pool()
+        else:
+            print("Starting app without database support")
+        
+        app.run(host='0.0.0.0', port=8080)

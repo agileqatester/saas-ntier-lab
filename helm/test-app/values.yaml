@@ -1,0 +1,46 @@
+replicaCount: 1
+
+image:
+  repository: python
+  tag: "3.11-slim"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: test-app
+
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080
+
+ingress:
+  enabled: false
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Database configuration
+database:
+  enabled: false
+  secretName: ""
+  host: ""
+  name: "postgres"
+  port: 5432
+
+# Environment
+environment: dev
+region: us-east-1

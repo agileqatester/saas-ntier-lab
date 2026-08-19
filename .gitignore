@@ -1,0 +1,49 @@
+# Terraform / OpenTofu state and caches
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+override.tf
+override.tf.json
+
+# Real values (IPs, bucket names, secrets) — NEVER commit
+terraform.tfvars
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+terraform.tfvars.local
+*.secrets.tfvars
+*.tfplan
+crash.tf
+
+# Documented examples only
+!terraform.tfvars.example
+!*.tfvars.example
+
+# SSH / TLS private material
+*.pem
+*.ppk
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+*.key
+!*.pub
+
+# Cloud / app secrets
+.env
+.env.*
+!.env.example
+credentials
+*.secrets.yaml
+secrets.yaml
+
+# Kubernetes admin configs
+kubeconfig
+*.kubeconfig
+admin.conf
+
+# macOS / editor noise
+.DS_Store
+.cursor/

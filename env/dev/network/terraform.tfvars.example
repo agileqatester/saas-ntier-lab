@@ -1,0 +1,10 @@
+aws_region  = "us-east-1"
+name_prefix = "ntier-dev"
+
+vpc_cidr = "10.0.0.0/16"
+
+# First AZ is Dev compute. A second AZ is listed so RDS/ALB can use an
+# empty subnet later (AWS requires two AZs). No extra hourly cost for subnets.
+azs                  = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.11.0/24", "10.0.12.0/24"]
