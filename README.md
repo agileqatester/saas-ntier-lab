@@ -6,7 +6,7 @@ This is a personal lab / resume reference, not a production SaaS product. See [W
 
 ## Architecture
 
-![saas-ntier-lab architecture](architecture.svg)
+![saas-ntier-lab architecture](architecture.jpg)
 
 **Private by default:** EKS nodes and RDS ENIs have **no public IPs** and **no IGW** on their route tables. The only IGW is on the **left edge**, for two Dev exceptions: (1) self-serve customer traffic to the public ALB, (2) NAT egress so nodes can pull images.
 
@@ -26,7 +26,7 @@ Private subnets egress via the NAT instance; S3 uses a **gateway** endpoint (no 
 
 **RDS vs S3/SNS:** RDS is an AWS-managed engine, but the instance still has **ENIs in your private subnets** and a security group (pods reach it on 5432 inside the VPC). S3, SNS, and CloudWatch are regional APIs — they sit outside the VPC. The diagram puts RDS with the other managed icons; the dashed line back into **1a/1b private subnets** is the network attachment. Off by default (`enable_rds`).
 
-Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architecture.svg](architecture.svg). Draw.io source: [architecture.mmd](architecture.mmd) (Arrange → Insert → Advanced → Mermaid).
+Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architecture.jpg](architecture.jpg). Vector source kept for later: [architecture.svg](architecture.svg). Draw.io: [architecture.mmd](architecture.mmd).
 
 ## What’s next
 
