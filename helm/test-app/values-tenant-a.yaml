@@ -1,0 +1,13 @@
+# ALB NodePort tenant. Pair with values.yaml + IRSA --set from tofu output.
+fullnameOverride: test-app
+serviceAccount:
+  name: test-app
+tenant:
+  id: a
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080
+networkPolicy:
+  enabled: true
+  ingressCidrs: []

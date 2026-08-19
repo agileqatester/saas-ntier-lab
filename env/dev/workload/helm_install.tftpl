@@ -6,6 +6,7 @@ helm upgrade --install test-app ${chart} --namespace default \
   --set database.enabled=true \
   --set database.host=${rds_host} \
   --set database.secretName=${rds_secret} \
+  --set tenant.id=lab \
 %{ else ~}
   --set database.enabled=false \
 %{ endif ~}

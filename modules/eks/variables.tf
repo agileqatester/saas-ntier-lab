@@ -112,3 +112,9 @@ variable "enable_node_ssm" {
   type        = bool
   default     = true
 }
+
+variable "enable_network_policy" {
+  description = "VPC CNI NetworkPolicy (required for Helm NetworkPolicy to enforce). Import the existing vpc-cni addon before first apply."
+  type        = bool
+  default     = true
+}

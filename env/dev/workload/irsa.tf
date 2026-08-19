@@ -12,7 +12,11 @@ data "aws_iam_policy_document" "test_app_assume" {
     condition {
       test     = "StringEquals"
       variable = "${module.eks.oidc_provider_url}:sub"
-      values   = ["system:serviceaccount:default:test-app"]
+      values = [
+        "system:serviceaccount:default:test-app",
+        "system:serviceaccount:tenant-a:test-app",
+        "system:serviceaccount:tenant-b:test-app",
+      ]
     }
     condition {
       test     = "StringEquals"

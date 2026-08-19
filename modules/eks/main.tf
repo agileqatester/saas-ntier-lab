@@ -75,6 +75,24 @@ resource "aws_eks_cluster" "this" {
   ]
 }
 
+# EKS already installs vpc-cni. Import it, then this resource turns on NetworkPolicy.
+# tofu import 'module.eks.aws_eks_addon.vpc_cni' <cluster-name>:vpc-cni
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = "vpc-cni"
+
+  configuration_values = jsonencode({
+    enableNetworkPolicy = var.enable_network_policy ? "true" : "false"
+  })
+
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  lifecycle {
+    ignore_changes = [addon_version]
+  }
+}
+
 resource "aws_iam_role" "eks_node" {
   name = "${var.name_prefix}-eks-node-role"
 

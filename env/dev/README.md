@@ -7,6 +7,8 @@ Do **not** apply in this directory. Use the stacks:
 | [network/](network/) | apply once; keep | ~$0 (VPC/subnets/IGW) + ~$1 if remote state/KMS |
 | [workload/](workload/) | apply for a test; destroy after | NAT, EKS, ALB, optional RDS |
 
+After RDS: Helm `values-tenant-a.yaml` / `values-tenant-b.yaml`. Steps and checks: root [README — Pooled tenants](../../README.md#pooled-tenants).
+
 ```bash
 cp network/terraform.tfvars.example network/terraform.tfvars
 # edit name_prefix if you want

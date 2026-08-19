@@ -33,6 +33,17 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Pooled tenancy: set per Helm release. Not taken from the client.
+tenant:
+  id: ""
+
+networkPolicy:
+  enabled: false
+  # Kubelet + NodePort SNAT (externalTrafficPolicy Cluster) use the node IP.
+  # Pod-to-pod uses the pod IP, so other tenants in the same subnet stay blocked.
+  # kubectl get nodes -o wide
+  ingressCidrs: []
+
 # Database configuration
 database:
   enabled: false

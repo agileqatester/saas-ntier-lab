@@ -1,0 +1,12 @@
+# ClusterIP only (one NodePort 30080 on the node). Prove isolation with kubectl.
+fullnameOverride: test-app
+serviceAccount:
+  name: test-app
+tenant:
+  id: b
+service:
+  type: ClusterIP
+  port: 8080
+networkPolicy:
+  enabled: true
+  ingressCidrs: []

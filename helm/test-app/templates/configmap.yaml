@@ -17,6 +17,17 @@ data:
     
     # Database configuration
     DB_ENABLED = os.getenv('DB_ENABLED', 'false').lower() == 'true'
+    TENANT_ID = os.getenv('TENANT_ID', '').strip()
+
+    def tenant_missing():
+        if DB_ENABLED and not TENANT_ID:
+            return jsonify({'error': 'TENANT_ID is not set on this pod'}), 500
+        return None
+
+    def ensure_tenant_schema(cursor):
+        cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT')
+        cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sample_requests_tenant_id ON sample_requests (tenant_id)')
     
     if DB_ENABLED:
         import boto3
@@ -80,7 +91,8 @@ data:
             'message': 'Test App Running',
             'hostname': socket.gethostname(),
             'ip': request.remote_addr,
-            'db_enabled': DB_ENABLED
+            'db_enabled': DB_ENABLED,
+            'tenant_id': TENANT_ID or None
         })
     
     @app.route('/health')
@@ -89,7 +101,8 @@ data:
         health_status = {
             'status': 'healthy',
             'hostname': socket.gethostname(),
-            'db_enabled': DB_ENABLED
+            'db_enabled': DB_ENABLED,
+            'tenant_id': TENANT_ID or None
         }
         
         if DB_ENABLED:
@@ -114,6 +127,9 @@ data:
         """Test database connection"""
         if not DB_ENABLED:
             return jsonify({'error': 'Database not enabled'}), 400
+        err = tenant_missing()
+        if err:
+            return err
         
         try:
             conn = get_db_connection()
@@ -138,6 +154,9 @@ data:
         """Initialize sample database table"""
         if not DB_ENABLED:
             return jsonify({'error': 'Database not enabled'}), 400
+        err = tenant_missing()
+        if err:
+            return err
         
         try:
             conn = get_db_connection()
@@ -151,7 +170,7 @@ data:
                     user_agent TEXT
                 );
             ''')
-            cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT;')
+            ensure_tenant_schema(cursor)
             conn.commit()
             cursor.close()
             return_db_connection(conn)
@@ -171,6 +190,9 @@ data:
         """Store a JSON message from the client"""
         if not DB_ENABLED:
             return jsonify({'error': 'Database not enabled'}), 400
+        err = tenant_missing()
+        if err:
+            return err
         body = request.get_json(silent=True) or {}
         message = body.get('message')
         if not message or not isinstance(message, str):
@@ -178,15 +200,16 @@ data:
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT;')
+            ensure_tenant_schema(cursor)
             cursor.execute('''
-                INSERT INTO sample_requests (remote_ip, hostname, user_agent, message)
-                VALUES (%s, %s, %s, %s) RETURNING id, timestamp, message;
+                INSERT INTO sample_requests (remote_ip, hostname, user_agent, message, tenant_id)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id, timestamp, message, tenant_id;
             ''', (
                 request.remote_addr,
                 socket.gethostname(),
                 request.headers.get('User-Agent', 'Unknown'),
                 message,
+                TENANT_ID,
             ))
             result = cursor.fetchone()
             conn.commit()
@@ -197,6 +220,7 @@ data:
                 'id': result[0],
                 'timestamp': str(result[1]),
                 'message': result[2],
+                'tenant_id': result[3],
             }), 201
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -206,17 +230,22 @@ data:
         """Log current request to database"""
         if not DB_ENABLED:
             return jsonify({'error': 'Database not enabled'}), 400
+        err = tenant_missing()
+        if err:
+            return err
         
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+            ensure_tenant_schema(cursor)
             cursor.execute('''
-                INSERT INTO sample_requests (remote_ip, hostname, user_agent)
-                VALUES (%s, %s, %s) RETURNING id, timestamp;
+                INSERT INTO sample_requests (remote_ip, hostname, user_agent, tenant_id)
+                VALUES (%s, %s, %s, %s) RETURNING id, timestamp, tenant_id;
             ''', (
                 request.remote_addr,
                 socket.gethostname(),
-                request.headers.get('User-Agent', 'Unknown')
+                request.headers.get('User-Agent', 'Unknown'),
+                TENANT_ID,
             ))
             result = cursor.fetchone()
             conn.commit()
@@ -226,7 +255,8 @@ data:
             return jsonify({
                 'status': 'success',
                 'id': result[0],
-                'timestamp': str(result[1])
+                'timestamp': str(result[1]),
+                'tenant_id': result[2]
             })
         except Exception as e:
             return jsonify({
@@ -239,17 +269,22 @@ data:
         """Query recent records from database"""
         if not DB_ENABLED:
             return jsonify({'error': 'Database not enabled'}), 400
+        err = tenant_missing()
+        if err:
+            return err
         
         try:
             limit = request.args.get('limit', 10, type=int)
             conn = get_db_connection()
             cursor = conn.cursor()
+            ensure_tenant_schema(cursor)
             cursor.execute('''
-                SELECT id, timestamp, remote_ip, hostname, user_agent, message
+                SELECT id, timestamp, remote_ip, hostname, user_agent, message, tenant_id
                 FROM sample_requests
+                WHERE tenant_id = %s
                 ORDER BY timestamp DESC
                 LIMIT %s;
-            ''', (limit,))
+            ''', (TENANT_ID, limit))
             rows = cursor.fetchall()
             cursor.close()
             return_db_connection(conn)
@@ -262,6 +297,7 @@ data:
                     'hostname': row[3],
                     'user_agent': row[4],
                     'message': row[5],
+                    'tenant_id': row[6],
                 }
                 for row in rows
             ]
@@ -269,6 +305,7 @@ data:
             return jsonify({
                 'status': 'success',
                 'count': len(records),
+                'tenant_id': TENANT_ID,
                 'records': records
             })
         except Exception as e:

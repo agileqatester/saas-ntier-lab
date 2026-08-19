@@ -1,9 +1,13 @@
+{{- if and .Values.database.enabled (eq (.Values.tenant.id | toString) "") }}
+{{- fail "tenant.id must be set when database.enabled is true (Helm value, not a client header)" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "test-app.fullname" . }}
   labels:
     {{- include "test-app.labels" . | nindent 4 }}
+    tenant: {{ .Values.tenant.id | quote }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -13,6 +17,7 @@ spec:
     metadata:
       labels:
         {{- include "test-app.selectorLabels" . | nindent 8 }}
+        tenant: {{ .Values.tenant.id | quote }}
     spec:
       securityContext:
         fsGroup: 1000
@@ -57,6 +62,8 @@ spec:
               value: {{ .Values.region | quote }}
             - name: DB_SECRET_NAME
               value: "{{ .Values.database.secretName }}"
+            - name: TENANT_ID
+              value: {{ .Values.tenant.id | quote }}
           livenessProbe:
             httpGet:
               path: /health
