@@ -164,10 +164,6 @@ fields @timestamp, @message
 | stats count(*) by tenant, bin(1h)
 ```
 
-## Public GitHub
-
-Publish **this Terraform/OpenTofu tree only** (modules, env, bootstrap, helm, README, LICENSE). Do not publish internal runbooks, career notes, or account-specific docs that may live in a private clone.
-
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).
