@@ -10,8 +10,6 @@ This is a personal lab / resume reference, not a production SaaS product. See [W
 
 **Private by default:** EKS nodes and RDS ENIs have **no public IPs** and **no IGW** on their route tables. The only IGW is on the **left edge**, for two Dev exceptions: (1) self-serve customer traffic to the public ALB, (2) NAT egress so nodes can pull images.
 
-**Private route tables are not VPC endpoints.** They are just how private subnets pick a next hop (`local`, `0.0.0.0/0` → NAT, and the S3 prefix list → gateway). The **S3 gateway endpoint** is a VPC endpoint, but it shows up as a **route** in that table (free, no ENI). CloudWatch, SNS, and Secrets Manager are **not** on that gateway; in Dev they still go out via NAT. **Interface** VPCEs (ECR, SSM, …) would be ENIs in a subnet — later, to drop NAT.
-
 **Customer path:** product edge is **HTTPS :443** on the ALB (ACM). Dev is **HTTP :80** locked to your `/32` because there is no domain or certificate yet. ALB→node is still VPC HTTP to NodePort **30080** (TLS terminates at the ALB). Do not send customer traffic through NAT.
 
 **Why NodePort 30080:** the ALB is Terraform-managed with **instance targets** (the EKS node’s private IP). There is no AWS Load Balancer Controller (it would not fit on a single `t4g.small`). Helm exposes the app as NodePort **30080**; the ALB health-checks that port. 30080 is a fixed high port (not 80, which needs extra privileges). Inside the cluster this is still a normal Service → pod; NodePort is only the ALB’s hook onto the node.
