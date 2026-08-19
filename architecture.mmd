@@ -1,0 +1,34 @@
+%% saas-ntier-lab — paste into draw.io: Arrange → Insert → Advanced → Mermaid
+flowchart TB
+  You["You — laptop /32"]
+
+  subgraph aws["AWS us-east-1"]
+    IGW[Internet Gateway]
+
+    subgraph vpc["VPC 10.0.0.0/16 — keep"]
+      subgraph pub["Public subnets 1a + 1b"]
+        ALB["ALB HTTP :80 — destroy"]
+        NAT["NAT instance t4g.nano + EIP — destroy"]
+      end
+      subgraph priv["Private subnets"]
+        EKS["EKS 1.35 · one t4g.small · Helm NodePort 30080 — destroy"]
+        RDS["RDS Postgres — enable_rds, off by default"]
+      end
+    end
+
+    S3GW[S3 gateway endpoint — keep]
+    LOGS[S3 ALB access logs — destroy]
+    CW[CloudWatch ALB 5xx → SNS — destroy]
+  end
+
+  You -->|"HTTP :80"| ALB
+  You -->|SSM Session Manager| NAT
+  You -->|"kubectl / EKS API"| EKS
+  IGW --> ALB
+  ALB -->|":30080"| EKS
+  EKS -.->|optional| RDS
+  priv -->|"0.0.0.0/0"| NAT
+  NAT --> IGW
+  priv -->|S3 prefix list| S3GW
+  ALB --> LOGS
+  ALB --> CW

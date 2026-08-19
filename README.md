@@ -4,6 +4,14 @@ Cheap AWS **n-tier lab** with a **SaaS shape**: one shared platform (VPC, EKS, A
 
 This is a personal lab / resume reference, not a production SaaS product. Pooled tenants (namespaces) and a PrivateLink front door for enterprise customers are the intended next steps, not this snapshot.
 
+## Architecture
+
+![saas-ntier-lab architecture](architecture.png)
+
+Laptop `/32` → HTTP ALB, SSM to the NAT instance, kubectl to the EKS API. ALB forwards to Helm on NodePort **30080**. Private subnets egress via the NAT instance; S3 uses a **gateway** endpoint (no NAT). RDS is dashed — `enable_rds` is off by default.
+
+Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Editable source: [architecture.mmd](architecture.mmd) (paste into draw.io: Arrange → Insert → Advanced → Mermaid).
+
 ## Terraform
 
 The HCL is standard Terraform. Examples use **OpenTofu** (`tofu`) because that is what this lab is tested with. HashiCorp **Terraform** (`terraform`) uses the same commands and the same files.
