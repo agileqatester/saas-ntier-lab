@@ -1,34 +1,40 @@
 %% saas-ntier-lab — paste into draw.io: Arrange → Insert → Advanced → Mermaid
-flowchart TB
-  You["You — laptop /32"]
+flowchart LR
+  Customer["Customer<br/>HTTPS :443 product · Dev HTTP :80 /32"]
+  You["You — operator<br/>kubectl + SSM to node"]
+  Enterprise["Enterprise — later<br/>PrivateLink, no IGW"]
 
   subgraph aws["AWS us-east-1"]
-    IGW[Internet Gateway]
+    IGW["IGW — edge only"]
 
-    subgraph vpc["VPC 10.0.0.0/16 — keep"]
-      subgraph pub["Public subnets 1a + 1b"]
-        ALB["ALB HTTP :80 — destroy"]
-        NAT["NAT instance t4g.nano + EIP — destroy"]
+    subgraph vpc["VPC 10.0.0.0/16 — private by default"]
+      subgraph edge["Public subnets — ALB + NAT, no pods"]
+        ALB["ALB HTTPS :443<br/>Dev: HTTP :80"]
+        NAT["NAT — Dev pulls only"]
       end
-      subgraph priv["Private subnets"]
-        EKS["EKS 1.35 · one t4g.small · Helm NodePort 30080 — destroy"]
-        RDS["RDS Postgres — enable_rds, off by default"]
+      subgraph priv["Private subnets — no IGW, no public IPs"]
+        EKS["EKS · NodePort 30080"]
+        PrivB["1b empty — two-AZ ALB/RDS"]
       end
     end
 
-    S3GW[S3 gateway endpoint — keep]
-    LOGS[S3 ALB access logs — destroy]
-    CW[CloudWatch ALB 5xx → SNS — destroy]
+    subgraph managed["AWS APIs"]
+      S3GW["S3 gateway VPCE"]
+      CW[CloudWatch]
+      SNS[SNS]
+      SM[Secrets Manager]
+      RDS["RDS — ENIs in private subnets"]
+    end
   end
 
-  You -->|"HTTP :80"| ALB
-  You -->|SSM Session Manager| NAT
-  You -->|"kubectl / EKS API"| EKS
-  IGW --> ALB
-  ALB -->|":30080"| EKS
-  EKS -.->|optional| RDS
-  priv -->|"0.0.0.0/0"| NAT
-  NAT --> IGW
-  priv -->|S3 prefix list| S3GW
-  ALB --> LOGS
-  ALB --> CW
+  Customer --> IGW --> ALB
+  ALB -->|"VPC local :30080"| EKS
+  You -->|kubectl| EKS
+  You -->|"SSM — node debug"| EKS
+  EKS -.->|"egress 0.0.0.0/0"| NAT
+  EKS -->|"gateway VPCE route"| S3GW
+  EKS -.-> CW
+  EKS -.-> SNS
+  EKS -.-> SM
+  EKS -.-> RDS
+  Enterprise -.-> EKS
