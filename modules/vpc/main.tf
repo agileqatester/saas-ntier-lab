@@ -114,7 +114,7 @@ resource "aws_route" "private_nat_gateway" {
 }
 
 resource "aws_route" "private_nat_instance" {
-  count = contains(["instance", "custom"], var.nat_mode) ? length(var.azs) : 0
+  count = var.nat_mode == "instance" ? length(var.azs) : 0
 
   route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"

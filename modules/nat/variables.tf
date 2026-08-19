@@ -19,11 +19,11 @@ variable "azs" {
 variable "nat_mode" {
   type        = string
   default     = "instance"
-  description = "NAT mode: gateway (AWS managed), instance (EC2 NAT), or custom"
+  description = "NAT mode: gateway (AWS managed) or instance (EC2 NAT with IMDSv2/SSM)"
 
   validation {
-    condition     = contains(["gateway", "instance", "custom"], var.nat_mode)
-    error_message = "nat_mode must be gateway, instance, or custom"
+    condition     = contains(["gateway", "instance"], var.nat_mode)
+    error_message = "nat_mode must be gateway or instance"
   }
 }
 

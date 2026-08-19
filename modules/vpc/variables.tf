@@ -39,13 +39,13 @@ variable "region" {
 }
 
 variable "nat_mode" {
-  description = "NAT for private subnets: none (no NAT, no default route), gateway, instance, or custom. none is the Dev keep-stack default (NAT lives in the workload stack)."
+  description = "NAT for private subnets: none (no NAT, no default route), gateway, or instance. none is the Dev keep-stack default (NAT lives in the workload stack)."
   type        = string
   default     = "none"
 
   validation {
-    condition     = contains(["none", "gateway", "instance", "custom"], var.nat_mode)
-    error_message = "nat_mode must be none, gateway, instance, or custom"
+    condition     = contains(["none", "gateway", "instance"], var.nat_mode)
+    error_message = "nat_mode must be none, gateway, or instance"
   }
 }
 

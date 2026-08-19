@@ -126,7 +126,7 @@ resource "aws_autoscaling_attachment" "alb" {
   count = var.enable_alb ? 1 : 0
 
   autoscaling_group_name = module.eks.node_group_asg_name
-  lb_target_group_arn    = module.alb[0].http_target_group_arn
+  lb_target_group_arn    = coalesce(module.alb[0].https_target_group_arn, module.alb[0].http_target_group_arn)
 }
 
 resource "aws_sns_topic" "alerts" {

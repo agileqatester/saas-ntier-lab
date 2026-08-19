@@ -102,6 +102,40 @@ resource "aws_iam_role_policy_attachment" "eks_worker_node_policies" {
   policy_arn = each.key
 }
 
+# Node group tags do not land on the EC2 instance. Tag at launch; AMI/type stay on the node group.
+resource "aws_launch_template" "eks_nodes" {
+  name_prefix = "${var.name_prefix}-eks-node-"
+  description = "Name tag for EKS managed nodes"
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "${var.name_prefix}-eks-node"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = {
+      Name = "${var.name_prefix}-eks-node"
+    }
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-eks-node-lt"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${var.name_prefix}-eks-nodes"
@@ -118,6 +152,11 @@ resource "aws_eks_node_group" "this" {
   ami_type       = var.ami_type
   capacity_type  = var.capacity_type
 
+  launch_template {
+    id      = aws_launch_template.eks_nodes.id
+    version = aws_launch_template.eks_nodes.latest_version
+  }
+
   update_config {
     max_unavailable = 1
   }
@@ -127,6 +166,17 @@ resource "aws_eks_node_group" "this" {
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_worker_node_policies]
+}
+
+# ASG-level Name so replacements also get it in the console.
+resource "aws_autoscaling_group_tag" "eks_node_name" {
+  autoscaling_group_name = aws_eks_node_group.this.resources[0].autoscaling_groups[0].name
+
+  tag {
+    key                 = "Name"
+    value               = "${var.name_prefix}-eks-node"
+    propagate_at_launch = true
+  }
 }
 
 resource "aws_iam_openid_connect_provider" "this" {
@@ -146,26 +196,11 @@ resource "aws_security_group_rule" "jumpbox_to_eks_api" {
   description              = "Allow API access from jumpbox to EKS control plane"
 }
 
+# Cluster ownership tag. Role/elb tags live on the VPC subnets (do not set them twice).
 resource "aws_ec2_tag" "private_cluster" {
   for_each = toset(var.private_subnet_ids)
 
   resource_id = each.value
   key         = "kubernetes.io/cluster/${aws_eks_cluster.this.name}"
   value       = "shared"
-}
-
-resource "aws_ec2_tag" "private_internal_elb" {
-  for_each = toset(var.private_subnet_ids)
-
-  resource_id = each.value
-  key         = "kubernetes.io/role/internal-elb"
-  value       = "1"
-}
-
-resource "aws_ec2_tag" "public_elb" {
-  for_each = toset(var.public_subnet_ids)
-
-  resource_id = each.value
-  key         = "kubernetes.io/role/elb"
-  value       = "1"
 }

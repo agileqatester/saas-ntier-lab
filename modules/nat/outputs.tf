@@ -9,17 +9,8 @@ output "nat_instance_id" {
 }
 
 output "nat_instance_primary_network_interface_id" {
-  value = (
-    var.nat_mode == "instance" && length(aws_instance.nat_instance) > 0 ? aws_instance.nat_instance[0].primary_network_interface_id :
-    var.nat_mode == "custom" && length(aws_instance.custom_nat) > 0 ? aws_instance.custom_nat[0].primary_network_interface_id :
-    ""
-  )
+  value       = var.nat_mode == "instance" && length(aws_instance.nat_instance) > 0 ? aws_instance.nat_instance[0].primary_network_interface_id : ""
   description = "Primary network interface id for the NAT instance (useful for routes)"
-}
-
-output "custom_nat_instance_id" {
-  value       = var.nat_mode == "custom" && length(aws_instance.custom_nat) > 0 ? aws_instance.custom_nat[0].id : ""
-  description = "Custom NAT instance id (empty if nat_mode != custom)"
 }
 
 output "nat_instance_public_ip" {

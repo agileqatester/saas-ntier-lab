@@ -22,6 +22,11 @@ output "http_target_group_arn" {
   value = try(aws_lb_target_group.http[0].arn, "")
 }
 
+output "https_target_group_arn" {
+  description = "HTTPS listener TG (empty when enable_https is false). Same instance/NodePort backend as HTTP."
+  value       = try(aws_lb_target_group.https[0].arn, "")
+}
+
 output "alb_arn" {
   value = aws_lb.this.arn
 }

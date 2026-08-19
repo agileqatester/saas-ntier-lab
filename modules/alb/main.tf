@@ -128,23 +128,23 @@ resource "aws_lb_target_group" "http" {
   })
 }
 
-# Update HTTPS target group to be conditional
+# HTTPS listener terminates TLS. Backend matches the HTTP TG: instance/NodePort over HTTP.
 resource "aws_lb_target_group" "https" {
   count       = var.enable_https ? 1 : 0
   name        = "${var.name_prefix}-tg-https"
-  port        = 443
-  protocol    = "HTTPS"
+  port        = var.target_port
+  protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "ip"
+  target_type = var.target_type
 
   health_check {
     enabled             = true
     interval            = 30
-    path                = "/"
-    protocol            = "HTTPS"
+    path                = var.health_check_path
+    protocol            = "HTTP"
     matcher             = "200-399"
     healthy_threshold   = 2
-    unhealthy_threshold = 2
+    unhealthy_threshold = 3
     timeout             = 5
   }
 
