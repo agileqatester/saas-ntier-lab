@@ -4,6 +4,7 @@ data "aws_elb_service_account" "current" {}
 locals {
   alb_logs_bucket = "${var.name_prefix}-alb-logs-${data.aws_caller_identity.current.account_id}"
   app_node_port   = 30080
+  app_node_port_b = 30081
 }
 
 resource "aws_s3_bucket" "alb_logs" {
@@ -106,6 +107,10 @@ module "alb" {
   health_check_path      = "/health"
   access_logs_bucket     = aws_s3_bucket.alb_logs[0].id
   access_logs_prefix     = "alb"
+  path_target_groups = {
+    a = { path_pattern = "/tenant-a*", target_port = local.app_node_port, priority = 10 }
+    b = { path_pattern = "/tenant-b*", target_port = local.app_node_port_b, priority = 20 }
+  }
 
   depends_on = [aws_s3_bucket_policy.alb_logs]
 }
@@ -115,18 +120,22 @@ resource "aws_security_group_rule" "alb_to_nodes" {
 
   type                     = "ingress"
   from_port                = local.app_node_port
-  to_port                  = local.app_node_port
+  to_port                  = local.app_node_port_b
   protocol                 = "tcp"
   security_group_id        = module.eks.cluster_security_group_id
   source_security_group_id = module.alb[0].alb_security_group_id
-  description              = "ALB to EKS NodePort"
+  description              = "ALB to EKS NodePorts 30080-30081"
 }
 
 resource "aws_autoscaling_attachment" "alb" {
-  count = var.enable_alb ? 1 : 0
+  for_each = var.enable_alb ? (
+    length(module.alb[0].path_target_group_arns) > 0
+    ? module.alb[0].path_target_group_arns
+    : { default = module.alb[0].http_target_group_arn }
+  ) : {}
 
   autoscaling_group_name = module.eks.node_group_asg_name
-  lb_target_group_arn    = coalesce(module.alb[0].https_target_group_arn, module.alb[0].http_target_group_arn)
+  lb_target_group_arn    = each.value
 }
 
 resource "aws_sns_topic" "alerts" {

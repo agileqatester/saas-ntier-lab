@@ -51,14 +51,16 @@ module "rds" {
   count  = var.enable_rds ? 1 : 0
   source = "../../../modules/rds"
 
-  name_prefix              = var.name_prefix
-  vpc_id                   = data.terraform_remote_state.network.outputs.vpc_id
-  private_subnet_ids       = data.terraform_remote_state.network.outputs.private_subnet_ids
-  eks_security_group_id    = module.eks.cluster_security_group_id
-  extra_security_group_ids = [module.nat.nat_instance_security_group_id]
-  environment              = "dev"
-  instance_class           = var.rds_instance_class
-  multi_az                 = false
-  backup_retention_days    = 0
-  create_jumpbox_rule      = false
+  name_prefix           = var.name_prefix
+  vpc_id                = data.terraform_remote_state.network.outputs.vpc_id
+  private_subnet_ids    = data.terraform_remote_state.network.outputs.private_subnet_ids
+  eks_security_group_id = module.eks.cluster_security_group_id
+  extra_security_group_ids = {
+    nat = module.nat.nat_instance_security_group_id
+  }
+  environment           = "dev"
+  instance_class        = var.rds_instance_class
+  multi_az              = false
+  backup_retention_days = 0
+  create_jumpbox_rule   = false
 }

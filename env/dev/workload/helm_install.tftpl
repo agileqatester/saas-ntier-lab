@@ -1,17 +1,38 @@
+set -euo pipefail
+aws eks update-kubeconfig --name ${cluster_name} --region ${region}
+kubectl wait --for=condition=Ready nodes --all --timeout=600s
+
+%{ if enable_rds ~}
+# Pooled tenants (RDS on). From env/dev/workload:
+export AWS_REGION=${region}
+export RDS_HOST=${rds_host}
+export MASTER_SECRET=${master_secret}
+export IRSA_A=${irsa_a}
+export IRSA_B=${irsa_b}
+export IRSA_MIGRATOR=${irsa_migrator}
+export SECRET_A=${secret_a}
+export SECRET_B=${secret_b}
+
+./../../../helm/test-app/onboard-tenant.sh a
+./../../../helm/test-app/onboard-tenant.sh b
+
+kubectl -n tenant-a rollout status deploy/test-app --timeout=300s
+kubectl -n tenant-b rollout status deploy/test-app --timeout=300s
+curl -s ${alb_url}/tenant-a/health
+echo
+curl -s ${alb_url}/tenant-b/health
+echo
+%{ else ~}
 helm upgrade --install test-app ${chart} --namespace default \
   --set fullnameOverride=test-app \
   --set serviceAccount.name=test-app \
-%{ if enable_rds ~}
-  --set-json 'serviceAccount.annotations={"eks.amazonaws.com/role-arn":"${irsa_arn}"}' \
-  --set database.enabled=true \
-  --set database.host=${rds_host} \
-  --set database.secretName=${rds_secret} \
-  --set tenant.id=lab \
-%{ else ~}
   --set database.enabled=false \
-%{ endif ~}
+  --set tenant.id=lab \
+  --set pathPrefix=/tenant-a \
   --set service.type=NodePort \
   --set service.nodePort=30080 \
   --set region=${region}
 kubectl -n default rollout status deploy/test-app --timeout=180s
-curl -s ${alb_health}
+curl -s ${alb_url}/tenant-a/health
+echo
+%{ endif ~}

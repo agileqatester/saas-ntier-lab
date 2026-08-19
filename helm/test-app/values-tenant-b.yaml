@@ -1,12 +1,18 @@
-# ClusterIP only (one NodePort 30080 on the node). Prove isolation with kubectl.
+# ALB path /tenant-b* → NodePort 30081.
 fullnameOverride: test-app
 serviceAccount:
   name: test-app
 tenant:
   id: b
+pathPrefix: /tenant-b
 service:
-  type: ClusterIP
+  type: NodePort
   port: 8080
+  nodePort: 30081
+quota:
+  enabled: true
 networkPolicy:
   enabled: true
   ingressCidrs: []
+database:
+  migrate: false

@@ -51,13 +51,13 @@ variable "rds_instance_class" {
 }
 
 variable "enable_rds" {
-  description = "Single switch for Postgres: instance, secret, IRSA. Default false (ALB session). Set true in terraform.tfvars, apply, then re-run tofu output -raw helm_install."
+  description = "Postgres + per-tenant secrets/IRSA + migrator role. Default false (ALB session). Set true in terraform.tfvars, apply, then re-run tofu output -raw helm_install."
   type        = bool
   default     = false
 }
 
 variable "enable_alb" {
-  description = "Internet-facing HTTP ALB in public subnets. Health check /health. Ingress is var.my_ip."
+  description = "Internet-facing HTTP ALB. Path rules /tenant-a* and /tenant-b* (NodePorts 30080/30081). Ingress is var.my_ip. Default action 404."
   type        = bool
   default     = true
 }

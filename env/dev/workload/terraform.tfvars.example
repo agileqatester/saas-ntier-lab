@@ -10,6 +10,6 @@ eks_node_instance_type = "t4g.small"
 
 enable_alb = true
 
-# Single switch. false = ALB session (no Postgres). true = RDS + secret + IRSA.
+# Single switch. false = ALB session (no Postgres). true = RDS + per-tenant secrets + IRSA.
 # After flipping, apply again, then re-run: tofu output -raw helm_install
 enable_rds = false

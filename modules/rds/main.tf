@@ -25,7 +25,7 @@ resource "aws_security_group" "rds" {
 }
 
 resource "aws_security_group_rule" "extra_clients" {
-  for_each = toset(var.extra_security_group_ids)
+  for_each = var.extra_security_group_ids
 
   type                     = "ingress"
   from_port                = 5432
@@ -33,7 +33,7 @@ resource "aws_security_group_rule" "extra_clients" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.rds.id
   source_security_group_id = each.value
-  description              = "Postgres from extra client SG"
+  description              = "Postgres from extra client SG (${each.key})"
 }
 
 data "aws_rds_engine_version" "postgres" {

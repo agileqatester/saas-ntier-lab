@@ -4,321 +4,377 @@ metadata:
   name: {{ include "test-app.fullname" . }}-config
   labels:
     {{- include "test-app.labels" . | nindent 4 }}
-  # trivy:ignore:AVD-KSV-0109 - This ConfigMap contains Python code, not secrets.
-  # The code retrieves secrets from AWS Secrets Manager, it does not store them.
+  # trivy:ignore:AVD-KSV-0109 - Python in a ConfigMap, not secrets.
 data:
   app.py: |
     import os
     import json
     import socket
+    import sys
+    from contextlib import contextmanager
     from flask import Flask, request, jsonify
-    
+
+    class PrefixMiddleware:
+        def __init__(self, wsgi_app, prefix):
+            self.wsgi_app = wsgi_app
+            self.prefix = (prefix or "").rstrip("/")
+
+        def __call__(self, environ, start_response):
+            path = environ.get("PATH_INFO", "")
+            if self.prefix and path.startswith(self.prefix):
+                environ["PATH_INFO"] = path[len(self.prefix):] or "/"
+                environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + self.prefix
+            return self.wsgi_app(environ, start_response)
+
     app = Flask(__name__)
-    
-    # Database configuration
-    DB_ENABLED = os.getenv('DB_ENABLED', 'false').lower() == 'true'
-    TENANT_ID = os.getenv('TENANT_ID', '').strip()
+    PATH_PREFIX = os.getenv("PATH_PREFIX", "").strip()
+    if PATH_PREFIX:
+        app.wsgi_app = PrefixMiddleware(app.wsgi_app, PATH_PREFIX)
+
+    DB_ENABLED = os.getenv("DB_ENABLED", "false").lower() == "true"
+    TENANT_ID = os.getenv("TENANT_ID", "").strip()
+
+    def log_event(**fields):
+        payload = {"tenant_id": TENANT_ID or None}
+        payload.update(fields)
+        print(json.dumps(payload), flush=True)
 
     def tenant_missing():
         if DB_ENABLED and not TENANT_ID:
-            return jsonify({'error': 'TENANT_ID is not set on this pod'}), 500
+            return jsonify({"error": "TENANT_ID is not set on this pod"}), 500
         return None
 
-    def ensure_tenant_schema(cursor):
-        cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT')
-        cursor.execute('ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sample_requests_tenant_id ON sample_requests (tenant_id)')
-    
     if DB_ENABLED:
         import boto3
         import psycopg2
         from psycopg2 import pool
-        
+
         db_pool = None
-        
+
         def get_db_credentials():
-            """Get DB credentials from Secrets Manager"""
             try:
-                secret_name = os.getenv('DB_SECRET_NAME')
-                region = os.getenv('AWS_REGION', 'us-east-1')
-                
-                client = boto3.client('secretsmanager', region_name=region)
-                response = client.get_secret_value(SecretId=secret_name)
-                secret = json.loads(response['SecretString'])
-                return secret
+                client = boto3.client("secretsmanager", region_name=os.getenv("AWS_REGION", "us-east-1"))
+                response = client.get_secret_value(SecretId=os.getenv("DB_SECRET_NAME"))
+                return json.loads(response["SecretString"])
             except Exception as e:
-                print(f"Error retrieving secret: {e}")
+                log_event(msg="secret_error", error=str(e))
                 return None
-        
+
         def init_db_pool():
-            """Initialize database connection pool"""
             global db_pool
             try:
                 creds = get_db_credentials()
                 if creds:
                     db_pool = psycopg2.pool.SimpleConnectionPool(
                         1, 10,
-                        host=os.getenv('DB_HOST'),
-                        database=os.getenv('DB_NAME', 'postgres'),
-                        user=creds['username'],
-                        password=creds['password'],
-                        port=int(os.getenv('DB_PORT', '5432')),
-                        sslmode='require'
+                        host=os.getenv("DB_HOST") or creds.get("host"),
+                        database=os.getenv("DB_NAME", creds.get("dbname", "postgres")),
+                        user=creds["username"],
+                        password=creds["password"],
+                        port=int(os.getenv("DB_PORT", creds.get("port", 5432))),
+                        sslmode="require",
                     )
-                    print("Database connection pool initialized")
+                    log_event(msg="db_pool_ready", user=creds["username"])
             except Exception as e:
-                print(f"Error initializing connection pool: {e}")
-        
+                log_event(msg="db_pool_error", error=str(e))
+
         def get_db_connection():
-            """Get connection from the pool"""
+            conn = None
             try:
                 if db_pool is None:
                     init_db_pool()
-                return db_pool.getconn()
+                conn = db_pool.getconn()
+                if not conn:
+                    return None
+                conn.rollback()
+                if TENANT_ID:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT_ID,))
+                return conn
             except Exception as e:
-                print(f"Error getting connection: {e}")
+                log_event(msg="db_getconn_error", error=str(e))
+                if conn is not None:
+                    try:
+                        db_pool.putconn(conn, close=True)
+                    except Exception:
+                        pass
                 return None
-        
+
         def return_db_connection(conn):
-            """Return connection to the pool"""
-            if conn:
-                db_pool.putconn(conn)
-    
-    @app.route('/')
+            if not conn or db_pool is None:
+                return
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            db_pool.putconn(conn)
+
+        @contextmanager
+        def db_conn():
+            conn = get_db_connection()
+            try:
+                yield conn
+            finally:
+                return_db_connection(conn)
+
+    @app.after_request
+    def after_request(resp):
+        log_event(msg="request", method=request.method, path=request.path, status=resp.status_code)
+        return resp
+
+    @app.route("/")
     def home():
-        """Main endpoint"""
         return jsonify({
-            'message': 'Test App Running',
-            'hostname': socket.gethostname(),
-            'ip': request.remote_addr,
-            'db_enabled': DB_ENABLED,
-            'tenant_id': TENANT_ID or None
+            "message": "Test App Running",
+            "hostname": socket.gethostname(),
+            "ip": request.remote_addr,
+            "db_enabled": DB_ENABLED,
+            "tenant_id": TENANT_ID or None,
         })
-    
-    @app.route('/health')
+
+    @app.route("/health")
     def health():
-        """Health check endpoint"""
         health_status = {
-            'status': 'healthy',
-            'hostname': socket.gethostname(),
-            'db_enabled': DB_ENABLED,
-            'tenant_id': TENANT_ID or None
+            "status": "healthy",
+            "hostname": socket.gethostname(),
+            "db_enabled": DB_ENABLED,
+            "tenant_id": TENANT_ID or None,
         }
-        
         if DB_ENABLED:
             try:
-                conn = get_db_connection()
-                if conn:
-                    cursor = conn.cursor()
-                    cursor.execute('SELECT 1;')
-                    cursor.close()
-                    return_db_connection(conn)
-                    health_status['database'] = 'connected'
-                else:
-                    health_status['database'] = 'disconnected'
+                with db_conn() as conn:
+                    if conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT 1")
+                        cursor.close()
+                        health_status["database"] = "connected"
+                    else:
+                        health_status["database"] = "disconnected"
             except Exception as e:
-                health_status['database'] = 'disconnected'
-                health_status['db_error'] = str(e)
-        
+                health_status["database"] = "disconnected"
+                health_status["db_error"] = str(e)
         return jsonify(health_status)
-    
-    @app.route('/db/version')
+
+    @app.route("/db/version")
     def db_version():
-        """Test database connection"""
         if not DB_ENABLED:
-            return jsonify({'error': 'Database not enabled'}), 400
+            return jsonify({"error": "Database not enabled"}), 400
         err = tenant_missing()
         if err:
             return err
-        
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT version();')
-            version = cursor.fetchone()
-            cursor.close()
-            return_db_connection(conn)
-            
-            return jsonify({
-                'status': 'success',
-                'db_version': version[0]
-            })
+            with db_conn() as conn:
+                if not conn:
+                    return jsonify({"status": "error", "message": "no db connection"}), 503
+                cursor = conn.cursor()
+                cursor.execute("SELECT version()")
+                version = cursor.fetchone()
+                cursor.execute("SELECT current_setting('app.tenant_id', true)")
+                setting = cursor.fetchone()
+                cursor.close()
+                return jsonify({"status": "success", "db_version": version[0], "app.tenant_id": setting[0]})
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
-    
-    @app.route('/db/init')
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/db/init")
     def init_db():
-        """Initialize sample database table"""
         if not DB_ENABLED:
-            return jsonify({'error': 'Database not enabled'}), 400
+            return jsonify({"error": "Database not enabled"}), 400
         err = tenant_missing()
         if err:
             return err
-        
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS sample_requests (
-                    id SERIAL PRIMARY KEY,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    remote_ip INET,
-                    hostname VARCHAR(100),
-                    user_agent TEXT
-                );
-            ''')
-            ensure_tenant_schema(cursor)
-            conn.commit()
-            cursor.close()
-            return_db_connection(conn)
-            
-            return jsonify({
-                'status': 'success',
-                'message': 'Database table created successfully'
-            })
+            with db_conn() as conn:
+                if not conn:
+                    return jsonify({"status": "error", "message": "no db connection"}), 503
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'sample_requests'"
+                )
+                row = cursor.fetchone()
+                cursor.close()
+                if not row:
+                    return jsonify({"status": "error", "message": "table missing; run migrate Job"}), 503
+                return jsonify({
+                    "status": "success",
+                    "rls": row[0],
+                    "force_rls": row[1],
+                    "tenant_id": TENANT_ID,
+                })
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
-    
-    @app.route('/db/items', methods=['POST'])
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/db/items", methods=["POST"])
     def create_item():
-        """Store a JSON message from the client"""
         if not DB_ENABLED:
-            return jsonify({'error': 'Database not enabled'}), 400
+            return jsonify({"error": "Database not enabled"}), 400
         err = tenant_missing()
         if err:
             return err
         body = request.get_json(silent=True) or {}
-        message = body.get('message')
+        message = body.get("message")
         if not message or not isinstance(message, str):
-            return jsonify({'error': 'JSON body must include a string "message"'}), 400
+            return jsonify({"error": "JSON body must include a string \"message\""}), 400
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            ensure_tenant_schema(cursor)
-            cursor.execute('''
-                INSERT INTO sample_requests (remote_ip, hostname, user_agent, message, tenant_id)
-                VALUES (%s, %s, %s, %s, %s) RETURNING id, timestamp, message, tenant_id;
-            ''', (
-                request.remote_addr,
-                socket.gethostname(),
-                request.headers.get('User-Agent', 'Unknown'),
-                message,
-                TENANT_ID,
-            ))
-            result = cursor.fetchone()
-            conn.commit()
-            cursor.close()
-            return_db_connection(conn)
-            return jsonify({
-                'status': 'success',
-                'id': result[0],
-                'timestamp': str(result[1]),
-                'message': result[2],
-                'tenant_id': result[3],
-            }), 201
+            with db_conn() as conn:
+                if not conn:
+                    return jsonify({"status": "error", "message": "no db connection"}), 503
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO sample_requests (remote_ip, hostname, user_agent, message, tenant_id)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id, timestamp, message, tenant_id
+                    """,
+                    (
+                        request.remote_addr,
+                        socket.gethostname(),
+                        request.headers.get("User-Agent", "Unknown"),
+                        message,
+                        TENANT_ID,
+                    ),
+                )
+                result = cursor.fetchone()
+                conn.commit()
+                cursor.close()
+                return jsonify({
+                    "status": "success",
+                    "id": result[0],
+                    "timestamp": str(result[1]),
+                    "message": result[2],
+                    "tenant_id": result[3],
+                }), 201
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 500
+            return jsonify({"status": "error", "message": str(e)}), 500
 
-    @app.route('/db/log')
-    def log_request():
-        """Log current request to database"""
-        if not DB_ENABLED:
-            return jsonify({'error': 'Database not enabled'}), 400
-        err = tenant_missing()
-        if err:
-            return err
-        
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            ensure_tenant_schema(cursor)
-            cursor.execute('''
-                INSERT INTO sample_requests (remote_ip, hostname, user_agent, tenant_id)
-                VALUES (%s, %s, %s, %s) RETURNING id, timestamp, tenant_id;
-            ''', (
-                request.remote_addr,
-                socket.gethostname(),
-                request.headers.get('User-Agent', 'Unknown'),
-                TENANT_ID,
-            ))
-            result = cursor.fetchone()
-            conn.commit()
-            cursor.close()
-            return_db_connection(conn)
-            
-            return jsonify({
-                'status': 'success',
-                'id': result[0],
-                'timestamp': str(result[1]),
-                'tenant_id': result[2]
-            })
-        except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
-    
-    @app.route('/db/records')
+    @app.route("/db/records")
     def get_records():
-        """Query recent records from database"""
         if not DB_ENABLED:
-            return jsonify({'error': 'Database not enabled'}), 400
+            return jsonify({"error": "Database not enabled"}), 400
         err = tenant_missing()
         if err:
             return err
-        
         try:
-            limit = request.args.get('limit', 10, type=int)
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            ensure_tenant_schema(cursor)
-            cursor.execute('''
-                SELECT id, timestamp, remote_ip, hostname, user_agent, message, tenant_id
-                FROM sample_requests
-                WHERE tenant_id = %s
-                ORDER BY timestamp DESC
-                LIMIT %s;
-            ''', (TENANT_ID, limit))
-            rows = cursor.fetchall()
-            cursor.close()
-            return_db_connection(conn)
-            
-            records = [
-                {
-                    'id': row[0],
-                    'timestamp': str(row[1]),
-                    'remote_ip': str(row[2]),
-                    'hostname': row[3],
-                    'user_agent': row[4],
-                    'message': row[5],
-                    'tenant_id': row[6],
-                }
-                for row in rows
-            ]
-            
-            return jsonify({
-                'status': 'success',
-                'count': len(records),
-                'tenant_id': TENANT_ID,
-                'records': records
-            })
+            limit = request.args.get("limit", 10, type=int)
+            with db_conn() as conn:
+                if not conn:
+                    return jsonify({"status": "error", "message": "no db connection"}), 503
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT id, timestamp, remote_ip, hostname, user_agent, message, tenant_id
+                    FROM sample_requests
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cursor.fetchall()
+                cursor.close()
+                records = [
+                    {
+                        "id": row[0],
+                        "timestamp": str(row[1]),
+                        "remote_ip": str(row[2]),
+                        "hostname": row[3],
+                        "user_agent": row[4],
+                        "message": row[5],
+                        "tenant_id": row[6],
+                    }
+                    for row in rows
+                ]
+                return jsonify({
+                    "status": "success",
+                    "count": len(records),
+                    "tenant_id": TENANT_ID,
+                    "records": records,
+                })
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
-    
-    if __name__ == '__main__':
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    if __name__ == "__main__":
         if DB_ENABLED:
-            print("Starting app with database support enabled")
+            log_event(msg="starting", db=True)
             init_db_pool()
         else:
-            print("Starting app without database support")
-        
-        app.run(host='0.0.0.0', port=8080)
+            log_event(msg="starting", db=False)
+        app.run(host="0.0.0.0", port=8080)
+
+  migrate.py: |
+    import json
+    import os
+    import sys
+    import boto3
+    import psycopg2
+    from psycopg2 import sql
+
+    region = os.getenv("AWS_REGION", "us-east-1")
+    sm = boto3.client("secretsmanager", region_name=region)
+
+    def load(name):
+        return json.loads(sm.get_secret_value(SecretId=name)["SecretString"])
+
+    master = load(os.environ["MASTER_SECRET"])
+    tenants = json.loads(os.environ["TENANT_SECRETS"])
+
+    conn = psycopg2.connect(
+        host=master["host"],
+        dbname=master.get("dbname", "postgres"),
+        user=master["username"],
+        password=master["password"],
+        port=int(master.get("port", 5432)),
+        sslmode="require",
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sample_requests (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            remote_ip INET,
+            hostname VARCHAR(100),
+            user_agent TEXT,
+            message TEXT,
+            tenant_id VARCHAR(64) NOT NULL
+        )
+        """
+    )
+    cur.execute("ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS message TEXT")
+    cur.execute("ALTER TABLE sample_requests ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sample_requests_tenant_id ON sample_requests (tenant_id)")
+
+    for tid, secret_name in tenants.items():
+        creds = load(secret_name)
+        role = creds["username"]
+        password = creds["password"]
+        cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+        if cur.fetchone():
+            cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(password)))
+        else:
+            cur.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(password)))
+        cur.execute(sql.SQL("GRANT CONNECT ON DATABASE postgres TO {}").format(sql.Identifier(role)))
+        cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(role)))
+        cur.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON sample_requests TO {}").format(sql.Identifier(role)))
+        cur.execute(sql.SQL("GRANT USAGE, SELECT ON SEQUENCE sample_requests_id_seq TO {}").format(sql.Identifier(role)))
+        cur.execute(sql.SQL("DROP POLICY IF EXISTS {} ON sample_requests").format(sql.Identifier("tenant_%s_isolation" % tid)))
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE POLICY {} ON sample_requests
+                  FOR ALL TO {}
+                  USING (tenant_id = {tid} AND current_setting('app.tenant_id', true) = {tid})
+                  WITH CHECK (tenant_id = {tid} AND current_setting('app.tenant_id', true) = {tid})
+                """
+            ).format(
+                sql.Identifier("tenant_%s_isolation" % tid),
+                sql.Identifier(role),
+                tid=sql.Literal(tid),
+            )
+        )
+
+    cur.execute("ALTER TABLE sample_requests ENABLE ROW LEVEL SECURITY")
+    cur.execute("ALTER TABLE sample_requests FORCE ROW LEVEL SECURITY")
+    cur.close()
+    conn.close()
+    print(json.dumps({"msg": "migrate_ok", "tenants": list(tenants.keys()), "force_rls": True}), flush=True)

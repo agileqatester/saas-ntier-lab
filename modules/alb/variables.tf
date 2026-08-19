@@ -93,3 +93,13 @@ variable "access_logs_prefix" {
   type    = string
   default = "alb"
 }
+
+variable "path_target_groups" {
+  description = "HTTP path routing to extra instance TGs (e.g. /tenant-a* → NodePort 30080). Empty keeps a single default TG."
+  type = map(object({
+    path_pattern = string
+    target_port  = number
+    priority     = number
+  }))
+  default = {}
+}

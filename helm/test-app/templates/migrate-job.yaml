@@ -1,0 +1,71 @@
+{{- if .Values.database.migrate }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: test-app-migrate
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+  {{- with .Values.database.migratorServiceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-app-migrate
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: test-app-migrate
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export PYTHONUSERBASE=/tmp/py HOME=/tmp
+              export PYTHONPATH=/tmp/py/lib/python3.11/site-packages
+              pip install --user --cache-dir /tmp/pip-cache boto3 psycopg2-binary
+              python /app/migrate.py
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.region | quote }}
+            - name: MASTER_SECRET
+              value: {{ .Values.database.masterSecret | quote }}
+            - name: TENANT_SECRETS
+              value: {{ .Values.database.tenantSecrets | toJson | quote }}
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: app-code
+          configMap:
+            name: {{ include "test-app.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+{{- end }}

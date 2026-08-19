@@ -19,9 +19,9 @@ variable "eks_security_group_id" {
 }
 
 variable "extra_security_group_ids" {
-  description = "Additional SGs allowed to reach Postgres (e.g. NAT instance for SSM port-forward)"
-  type        = list(string)
-  default     = []
+  description = "Additional SGs allowed to reach Postgres. Map keys must be static (e.g. nat); values may be apply-time IDs."
+  type        = map(string)
+  default     = {}
 }
 
 variable "db_username" {

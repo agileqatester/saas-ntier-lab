@@ -1,13 +1,13 @@
 # Dev environment
 
-Do **not** apply in this directory. Use the stacks:
+Do **not** run OpenTofu in this directory. Use the stacks:
 
 | Directory | Habit | Cost while left on |
 |-----------|--------|--------------------|
-| [network/](network/) | apply once; keep | ~$0 (VPC/subnets/IGW) + ~$1 if remote state/KMS |
-| [workload/](workload/) | apply for a test; destroy after | NAT, EKS, ALB, optional RDS |
+| [network/](network/) | `tofu apply` once; keep | ~$0 (VPC/subnets/IGW) + ~$1 if remote state/KMS |
+| [workload/](workload/) | `tofu apply` for a test; `tofu destroy` after | NAT, EKS, ALB, optional RDS |
 
-After RDS: Helm `values-tenant-a.yaml` / `values-tenant-b.yaml`. Steps and checks: root [README — Pooled tenants](../../README.md#pooled-tenants).
+After RDS: `helm/test-app/onboard-tenant.sh` (k8s half; IAM is OpenTofu `for_each`). Paths `/tenant-a*` and `/tenant-b*` on the ALB. Steps and checks: root [README — Pooled tenants](../../README.md#pooled-tenants).
 
 ```bash
 cp network/terraform.tfvars.example network/terraform.tfvars
@@ -16,7 +16,9 @@ cp network/terraform.tfvars.example network/terraform.tfvars
 cd network
 tofu init
 tofu plan -var-file=terraform.tfvars
-tofu apply -var-file=terraform.tfvars
+# Stage 2+: tofu apply -var-file=terraform.tfvars
 ```
 
-CLI is OpenTofu (`tofu`) or HashiCorp Terraform (`terraform`).
+CLI is **OpenTofu** (`tofu`). `terraform` as an alias to `tofu` is fine locally.
+
+Root `main.tf` and `env/prod` are the old apply path. Do not use them for new work.

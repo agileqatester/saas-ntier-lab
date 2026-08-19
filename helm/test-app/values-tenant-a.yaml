@@ -1,13 +1,18 @@
-# ALB NodePort tenant. Pair with values.yaml + IRSA --set from tofu output.
+# ALB path /tenant-a* → NodePort 30080. Runs RLS migrate Job.
 fullnameOverride: test-app
 serviceAccount:
   name: test-app
 tenant:
   id: a
+pathPrefix: /tenant-a
 service:
   type: NodePort
   port: 8080
   nodePort: 30080
+quota:
+  enabled: true
 networkPolicy:
   enabled: true
   ingressCidrs: []
+database:
+  migrate: true

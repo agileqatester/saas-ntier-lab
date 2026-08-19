@@ -28,11 +28,25 @@ output "rds_endpoint" {
 }
 
 output "rds_secret_name" {
-  value = var.enable_rds ? module.rds[0].rds_credentials_secret_name : null
+  description = "Master secret (migrate Job only). Tenant pods use tenant_secret_names."
+  value       = var.enable_rds ? module.rds[0].rds_credentials_secret_name : null
+}
+
+output "tenant_secret_names" {
+  value = var.enable_rds ? { for k, s in aws_secretsmanager_secret.tenant : k => s.name } : {}
+}
+
+output "tenant_irsa_role_arns" {
+  value = var.enable_rds ? { for k, r in aws_iam_role.tenant : k => r.arn } : {}
+}
+
+output "migrator_irsa_role_arn" {
+  value = var.enable_rds ? aws_iam_role.migrator[0].arn : null
 }
 
 output "test_app_irsa_role_arn" {
-  value = var.enable_rds ? aws_iam_role.test_app[0].arn : null
+  description = "IRSA for tenant-a (compat). Prefer tenant_irsa_role_arns."
+  value       = var.enable_rds ? aws_iam_role.tenant["a"].arn : null
 }
 
 output "alb_dns_name" {
@@ -52,14 +66,19 @@ output "sns_alerts_topic_arn" {
 }
 
 output "helm_install" {
-  description = "Helm after nodes are Ready. Follows enable_rds. ALB NodePort 30080; no port-forward."
+  description = "Onboard both tenants after nodes are Ready. Uses helm/test-app/onboard-tenant.sh"
   value = templatefile("${path.module}/helm_install.tftpl", {
-    enable_rds = var.enable_rds
-    chart      = "${path.module}/../../../helm/test-app"
-    irsa_arn   = try(aws_iam_role.test_app[0].arn, "")
-    rds_host   = try(module.rds[0].rds_host, "")
-    rds_secret = try(module.rds[0].rds_credentials_secret_name, "")
-    region     = var.aws_region
-    alb_health = "${try(module.alb[0].alb_url, "http://127.0.0.1:8080")}/health"
+    enable_rds    = var.enable_rds
+    chart         = "${path.module}/../../../helm/test-app"
+    irsa_a        = try(aws_iam_role.tenant["a"].arn, "")
+    irsa_b        = try(aws_iam_role.tenant["b"].arn, "")
+    irsa_migrator = try(aws_iam_role.migrator[0].arn, "")
+    secret_a      = try(aws_secretsmanager_secret.tenant["a"].name, "")
+    secret_b      = try(aws_secretsmanager_secret.tenant["b"].name, "")
+    rds_host      = try(module.rds[0].rds_host, "")
+    master_secret = try(module.rds[0].rds_credentials_secret_name, "")
+    region        = var.aws_region
+    cluster_name  = module.eks.eks_cluster_name
+    alb_url       = try(module.alb[0].alb_url, "http://127.0.0.1:8080")
   })
 }

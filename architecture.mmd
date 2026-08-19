@@ -1,4 +1,5 @@
 %% saas-ntier-lab — paste into draw.io: Arrange → Insert → Advanced → Mermaid
+%% GitHub README uses architecture.jpg (SVG does not render as the README image).
 flowchart LR
   Customer["Customer<br/>HTTPS :443 product · Dev HTTP :80 /32"]
   You["You — operator<br/>kubectl + SSM to node"]
@@ -9,11 +10,13 @@ flowchart LR
 
     subgraph vpc["VPC 10.0.0.0/16 — private by default"]
       subgraph edge["Public subnets — ALB + NAT, no pods"]
-        ALB["ALB HTTPS :443<br/>Dev: HTTP :80"]
+        ALB["ALB HTTPS :443<br/>Dev HTTP :80 /32<br/>/tenant-a* · /tenant-b* · else 404"]
         NAT["NAT — Dev pulls only"]
       end
       subgraph priv["Private subnets — no IGW, no public IPs"]
-        EKS["EKS · NodePort 30080"]
+        EKS["EKS 1.35 · t4g.small"]
+        TA["tenant-a · NP 30080 · IRSA a"]
+        TB["tenant-b · NP 30081 · IRSA b"]
         PrivB["1b empty — two-AZ ALB/RDS"]
       end
     end
@@ -22,19 +25,24 @@ flowchart LR
       S3GW["S3 gateway VPCE"]
       CW[CloudWatch]
       SNS[SNS]
-      SM[Secrets Manager]
-      RDS["RDS — ENIs in private subnets"]
+      SM["Secrets Manager<br/>master + tenant-a + tenant-b"]
+      RDS["RDS — RLS + FORCE<br/>LOGIN tenant_a / tenant_b"]
     end
   end
 
   Customer --> IGW --> ALB
-  ALB -->|"VPC local :30080"| EKS
+  ALB -->|"/tenant-a* :30080"| TA
+  ALB -->|"/tenant-b* :30081"| TB
+  TA --- EKS
+  TB --- EKS
   You -->|kubectl| EKS
   You -->|"SSM — node debug"| EKS
   EKS -.->|"egress 0.0.0.0/0"| NAT
   EKS -->|"gateway VPCE route"| S3GW
   EKS -.-> CW
   EKS -.-> SNS
-  EKS -.-> SM
-  EKS -.-> RDS
+  TA -.-> SM
+  TB -.-> SM
+  TA -.-> RDS
+  TB -.-> RDS
   Enterprise -.-> EKS

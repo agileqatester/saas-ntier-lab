@@ -37,6 +37,17 @@ affinity: {}
 tenant:
   id: ""
 
+pathPrefix: ""
+
+quota:
+  enabled: false
+  # 2 = migrate Job + 1 app replica. Scale to 3 → Pending.
+  pods: "2"
+  requestsCpu: "100m"
+  requestsMemory: "256Mi"
+  limitsCpu: "500m"
+  limitsMemory: "512Mi"
+
 networkPolicy:
   enabled: false
   # Kubelet + NodePort SNAT (externalTrafficPolicy Cluster) use the node IP.
@@ -51,6 +62,11 @@ database:
   host: ""
   name: "postgres"
   port: 5432
+  migrate: false
+  masterSecret: ""
+  tenantSecrets: {}
+  migratorServiceAccount:
+    annotations: {}
 
 # Environment
 environment: dev

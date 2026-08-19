@@ -19,7 +19,13 @@ output "alb_url" {
 }
 
 output "http_target_group_arn" {
-  value = try(aws_lb_target_group.http[0].arn, "")
+  description = "Default HTTP TG (empty when path_target_groups is set)"
+  value       = try(aws_lb_target_group.http[0].arn, "")
+}
+
+output "path_target_group_arns" {
+  description = "Map of path-route key → target group ARN"
+  value       = { for k, tg in aws_lb_target_group.path : k => tg.arn }
 }
 
 output "https_target_group_arn" {

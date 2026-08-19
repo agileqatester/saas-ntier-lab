@@ -64,6 +64,8 @@ spec:
               value: "{{ .Values.database.secretName }}"
             - name: TENANT_ID
               value: {{ .Values.tenant.id | quote }}
+            - name: PATH_PREFIX
+              value: {{ .Values.pathPrefix | quote }}
           livenessProbe:
             httpGet:
               path: /health
