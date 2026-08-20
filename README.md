@@ -1,8 +1,8 @@
 # ntier-app
 
-AWS n-tier lab: VPC, NAT instance, EKS, RDS, Secrets Manager, Helm. Written in **OpenTofu** (Terraform-compatible HCL). Dev is shaped to stay cheap: keep the free network, destroy paid compute after a test.
+AWS n-tier lab: VPC, NAT instance, EKS, RDS, Secrets Manager, Helm. Designed and deployed a cost-optimized, multi-tenant EKS platform featuring path-based ALB routing, Granular IRSA least-privilege access, and PostgreSQL Row-Level Security (RLS) to guarantee strict tenant isolation on shared compute.
 
-This repository is a **personal lab / resume reference**, not a production account.
+This repository is a **personal lab**, not a production account.
 
 ## Architecture
 
@@ -24,13 +24,15 @@ Private subnets egress via the NAT instance; S3 uses a **gateway** endpoint (no 
 
 **RDS vs S3/SNS:** RDS is an AWS-managed engine, but the instance still has **ENIs in your private subnets** and a security group (pods reach it on 5432 inside the VPC). S3, SNS, and CloudWatch are regional APIs — they sit outside the VPC. The diagram puts RDS with the other managed icons; the dashed line back into **1a/1b private subnets** is the network attachment. Off by default (`enable_rds`).
 
-**Pooled tenants (same platform):** namespaces `tenant-a` / `tenant-b`, one Postgres, **RLS** (`FORCE ROW LEVEL SECURITY` plus per-role policies and `SET LOCAL app.tenant_id` on checkout). Each tenant has its own DB login, Secrets Manager secret, and IRSA role. The public ALB is path-based on the default ELB DNS name: `/tenant-a*` → NodePort **30080**, `/tenant-b*` → **30081** (no purchased domain). Helm `PATH_PREFIX` strips the path so the app still serves `/health`. ResourceQuota caps each namespace at two pods (scale to 3 → deploy **2/3**; the extra pod is never created). `helm/test-app/onboard-tenant.sh` is the k8s half; IAM stays in OpenTofu `for_each`.
+**Pooled tenants (same platform):** namespaces `tenant-a` / `tenant-b` on one shared EKS cluster, one shared Postgres — no stack-per-tenant, no database-per-tenant. Isolation is enforced at three independent layers rather than one: **network** (default-deny `NetworkPolicy` between namespaces, VPC CNI policy enforcement), **identity** (each tenant has its own IRSA role, trusted only by its own service account, scoped only to its own Secrets Manager secret), and **data** (`FORCE ROW LEVEL SECURITY` with a policy bound to each tenant's dedicated Postgres role — not just a session variable check, so a role can only ever see its own rows even if the app forgets to set one). A bug in one layer doesn't collapse the whole boundary. The public ALB is path-based on the default ELB DNS name — `/tenant-a*` → NodePort **30080**, `/tenant-b*` → **30081** — so no purchased domain is required. `ResourceQuota` caps each namespace at two pods for fair-share (scale to 3 → **2/3**, admission blocks the third). `helm/test-app/onboard-tenant.sh` handles the k8s half of onboarding; IAM/secrets stay in OpenTofu `for_each` so a new tenant is one `for_each` entry plus one script invocation, not a hand-wired stack.
 
 Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architecture.jpg](architecture.jpg) (GitHub README image). Draw.io source: [architecture.mmd](architecture.mmd).
 
 ## What’s next
 
-Same shared platform. No rewrite.
+## What's next
+
+Same shared platform. No rewrite. Pooled multi-tenancy — routing, network isolation, IAM scoping, and row-level data isolation — is done and tested (see Validation below). What's left is edge/network hardening:
 
 1. **HTTPS on the ALB** — ACM on a domain you **own**. A Route 53 private zone does not get a public cert and does not resolve from your laptop.
 2. **PrivateLink provider** — enterprise customers attach privately; they never use the IGW.
@@ -114,7 +116,13 @@ With RDS on, `helm_install` refreshes kubeconfig, waits for a Ready node, and ru
 
 ## Pooled tenants
 
-Same EKS and RDS. Each tenant pod uses **its own** Postgres role and secret. A Job in `tenant-a` (master secret) creates the table, `FORCE ROW LEVEL SECURITY`, and per-role policies. App code sets `SET LOCAL app.tenant_id` on every connection checkout; `/db/records` has **no** `WHERE tenant_id` — RLS is the filter.
+Same EKS cluster, same RDS instance, both tenants — the SaaS pattern this lab is built to prove out. Isolation isn't a single control; it's layered so no one bug removes it:
+
+- **Network:** `tenant-a` and `tenant-b` sit in separate namespaces with a default-deny `NetworkPolicy` between them, enforced by the VPC CNI's network policy support (not just Kubernetes-native, which some CNIs ignore).
+- **Identity:** each tenant pod assumes its **own** IRSA role, trusted only by its own service account (`system:serviceaccount:tenant-a:test-app`), scoped only to read its own Secrets Manager secret. Tenant B's pods have no IAM path to tenant A's credentials, and vice versa.
+- **Data:** each tenant has its own Postgres login, and the table has `FORCE ROW LEVEL SECURITY` with a policy bound to that specific role. App code sets `SET LOCAL app.tenant_id` on every connection checkout as a second check, but the role-bound policy is the one that actually matters — `/db/records` has **no** `WHERE tenant_id` in the query at all. Postgres does the filtering, not application code, which means a missing `WHERE` clause in a future endpoint can't leak cross-tenant data.
+
+The bootstrap migration Job (running as its own IRSA-scoped service account, `tenant-a:test-app-migrate`) creates the table, enables `FORCE ROW LEVEL SECURITY`, and provisions each tenant's role + policy on first run.
 
 From `env/dev/workload` after apply:
 
@@ -148,7 +156,7 @@ aws eks describe-addon --cluster-name ntier-dev-eks-cluster --addon-name vpc-cni
 
 kubectl run netcheck -n tenant-b --rm -it --image=busybox --restart=Never -- \
   wget -qO- --timeout=3 http://test-app.tenant-a.svc.cluster.local:8080/health
-# pass: download timed out
+# pass: download timed out — proves NetworkPolicy blocks tenant-b from reaching tenant-a even inside the cluster
 
 kubectl -n tenant-a scale deploy/test-app --replicas=3
 kubectl -n tenant-a get deploy test-app   # 2/3; extra pod never created (quota admission)
