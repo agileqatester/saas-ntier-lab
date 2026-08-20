@@ -27,9 +27,26 @@ output "rds_endpoint" {
   value = var.enable_rds ? module.rds[0].rds_endpoint : null
 }
 
+output "rds_host" {
+  value = var.enable_rds ? module.rds[0].rds_host : null
+}
+
 output "rds_secret_name" {
   description = "Master secret (migrate Job only). Tenant pods use tenant_secret_names."
   value       = var.enable_rds ? module.rds[0].rds_credentials_secret_name : null
+}
+
+output "aws_region" {
+  value = var.aws_region
+}
+
+output "tenant_ids" {
+  value = var.tenant_ids
+}
+
+output "tenant_node_ports" {
+  description = "NodePort per tenant (30080 + index in tenant_ids). Must match Helm."
+  value       = local.tenant_node_ports
 }
 
 output "tenant_secret_names" {
@@ -45,8 +62,8 @@ output "migrator_irsa_role_arn" {
 }
 
 output "test_app_irsa_role_arn" {
-  description = "IRSA for tenant-a (compat). Prefer tenant_irsa_role_arns."
-  value       = var.enable_rds ? aws_iam_role.tenant["a"].arn : null
+  description = "IRSA for the first tenant_ids entry (compat). Prefer tenant_irsa_role_arns."
+  value       = var.enable_rds ? aws_iam_role.tenant[local.first_tenant].arn : null
 }
 
 output "alb_dns_name" {
@@ -65,20 +82,24 @@ output "sns_alerts_topic_arn" {
   value = var.enable_alb ? aws_sns_topic.alerts[0].arn : null
 }
 
+output "app_log_group" {
+  value = aws_cloudwatch_log_group.app.name
+}
+
 output "helm_install" {
-  description = "Onboard both tenants after nodes are Ready. Uses helm/test-app/onboard-tenant.sh"
+  description = "Onboard var.tenant_ids after nodes are Ready. Uses helm/test-app/onboard_tenant.py"
   value = templatefile("${path.module}/helm_install.tftpl", {
-    enable_rds    = var.enable_rds
-    chart         = "${path.module}/../../../helm/test-app"
-    irsa_a        = try(aws_iam_role.tenant["a"].arn, "")
-    irsa_b        = try(aws_iam_role.tenant["b"].arn, "")
-    irsa_migrator = try(aws_iam_role.migrator[0].arn, "")
-    secret_a      = try(aws_secretsmanager_secret.tenant["a"].name, "")
-    secret_b      = try(aws_secretsmanager_secret.tenant["b"].name, "")
-    rds_host      = try(module.rds[0].rds_host, "")
-    master_secret = try(module.rds[0].rds_credentials_secret_name, "")
-    region        = var.aws_region
-    cluster_name  = module.eks.eks_cluster_name
-    alb_url       = try(module.alb[0].alb_url, "http://127.0.0.1:8080")
+    enable_rds      = var.enable_rds
+    chart           = "${path.module}/../../../helm/test-app"
+    onboard         = "${path.module}/../../../helm/test-app/onboard_tenant.py"
+    fluent_chart    = "${path.module}/../../../helm/fluent-bit"
+    fluent_bit_role = aws_iam_role.fluent_bit.arn
+    log_group       = aws_cloudwatch_log_group.app.name
+    tenant_ids      = var.tenant_ids
+    first_tenant    = local.first_tenant
+    first_node_port = local.tenant_node_ports[local.first_tenant]
+    region          = var.aws_region
+    cluster_name    = module.eks.eks_cluster_name
+    alb_url         = try(module.alb[0].alb_url, "http://127.0.0.1:8080")
   })
 }

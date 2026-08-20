@@ -13,3 +13,8 @@ enable_alb = true
 # Single switch. false = ALB session (no Postgres). true = RDS + per-tenant secrets + IRSA.
 # After flipping, apply again, then re-run: tofu output -raw helm_install
 enable_rds = false
+
+# Pooled tenant keys. IAM/secrets when enable_rds; ALB /tenant-<id>* and NodePort 30080+index always.
+# First id runs the RLS migrate Job. To add a tenant: append an id, apply, then onboard_tenant.py
+# (README — Add a tenant).
+tenant_ids = ["a", "b", "c"]

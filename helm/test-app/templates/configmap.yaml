@@ -9,10 +9,13 @@ data:
   app.py: |
     import os
     import json
+    import logging
     import socket
     import sys
     from contextlib import contextmanager
     from flask import Flask, request, jsonify
+
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
     class PrefixMiddleware:
         def __init__(self, wsgi_app, prefix):
@@ -119,7 +122,8 @@ data:
 
     @app.after_request
     def after_request(resp):
-        log_event(msg="request", method=request.method, path=request.path, status=resp.status_code)
+        if request.path != "/health":
+            log_event(msg="request", method=request.method, path=request.path, status=resp.status_code)
         return resp
 
     @app.route("/")

@@ -1,0 +1,19 @@
+image:
+  repository: public.ecr.aws/aws-observability/aws-for-fluent-bit
+  tag: stable
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  annotations: {}
+  name: fluent-bit
+
+region: us-east-1
+logGroup: /ntier-dev/app
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi

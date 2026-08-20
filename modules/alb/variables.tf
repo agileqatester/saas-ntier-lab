@@ -103,3 +103,9 @@ variable "path_target_groups" {
   }))
   default = {}
 }
+
+variable "fixed_response_body" {
+  description = "HTTP 404 body when path_target_groups is set (listener default action)."
+  type        = string
+  default     = "use /tenant-a/ or /tenant-b/"
+}

@@ -3,8 +3,6 @@ data "aws_elb_service_account" "current" {}
 
 locals {
   alb_logs_bucket = "${var.name_prefix}-alb-logs-${data.aws_caller_identity.current.account_id}"
-  app_node_port   = 30080
-  app_node_port_b = 30081
 }
 
 resource "aws_s3_bucket" "alb_logs" {
@@ -103,14 +101,12 @@ module "alb" {
   http_redirect_to_https = false
   ingress_cidrs          = [var.my_ip]
   target_type            = "instance"
-  target_port            = local.app_node_port
+  target_port            = local.tenant_node_ports[local.first_tenant]
   health_check_path      = "/health"
   access_logs_bucket     = aws_s3_bucket.alb_logs[0].id
   access_logs_prefix     = "alb"
-  path_target_groups = {
-    a = { path_pattern = "/tenant-a*", target_port = local.app_node_port, priority = 10 }
-    b = { path_pattern = "/tenant-b*", target_port = local.app_node_port_b, priority = 20 }
-  }
+  path_target_groups     = local.tenant_path_target_groups
+  fixed_response_body    = local.alb_404_body
 
   depends_on = [aws_s3_bucket_policy.alb_logs]
 }
@@ -119,12 +115,12 @@ resource "aws_security_group_rule" "alb_to_nodes" {
   count = var.enable_alb ? 1 : 0
 
   type                     = "ingress"
-  from_port                = local.app_node_port
-  to_port                  = local.app_node_port_b
+  from_port                = local.node_port_min
+  to_port                  = local.node_port_max
   protocol                 = "tcp"
   security_group_id        = module.eks.cluster_security_group_id
   source_security_group_id = module.alb[0].alb_security_group_id
-  description              = "ALB to EKS NodePorts 30080-30081"
+  description              = "ALB to EKS NodePorts ${local.node_port_min}-${local.node_port_max}"
 }
 
 resource "aws_autoscaling_attachment" "alb" {

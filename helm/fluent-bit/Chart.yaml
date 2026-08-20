@@ -1,0 +1,6 @@
+apiVersion: v2
+name: fluent-bit
+description: Ship tenant app JSON logs (tenant_id) to CloudWatch Logs
+type: application
+version: 0.1.0
+appVersion: "stable"

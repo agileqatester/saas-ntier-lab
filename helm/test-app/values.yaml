@@ -16,7 +16,7 @@ serviceAccount:
 service:
   type: NodePort
   port: 8080
-  nodePort: 30080
+  # Chart default only. Real ports are 30080 + index in var.tenant_ids (tofu → onboard_tenant.py).
 
 ingress:
   enabled: false

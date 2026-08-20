@@ -56,8 +56,23 @@ variable "enable_rds" {
   default     = false
 }
 
+variable "tenant_ids" {
+  description = "Pooled tenant keys. IAM, secrets, ALB /tenant-<id>*, NodePort 30080+index. First id runs the RLS migrate Job. Used only when enable_rds is true for IAM/secrets; ALB paths always follow this list."
+  type        = list(string)
+  default     = ["a", "b", "c"]
+
+  validation {
+    condition     = length(var.tenant_ids) > 0 && length(var.tenant_ids) == length(toset(var.tenant_ids))
+    error_message = "tenant_ids must be unique and non-empty."
+  }
+  validation {
+    condition     = alltrue([for t in var.tenant_ids : can(regex("^[a-z][a-z0-9]{0,15}$", t))])
+    error_message = "each tenant id must be a short lowercase label (e.g. a, b, c)."
+  }
+}
+
 variable "enable_alb" {
-  description = "Internet-facing HTTP ALB. Path rules /tenant-a* and /tenant-b* (NodePorts 30080/30081). Ingress is var.my_ip. Default action 404."
+  description = "Internet-facing HTTP ALB. Path rules /tenant-<id>* from var.tenant_ids (NodePorts 30080+index). Ingress is var.my_ip. Default action 404."
   type        = bool
   default     = true
 }

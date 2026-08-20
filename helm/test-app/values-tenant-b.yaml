@@ -1,4 +1,5 @@
-# ALB path /tenant-b* → NodePort 30081.
+# Example overlay for tenant b. Do not set service.nodePort — onboard_tenant.py
+# uses tofu output tenant_node_ports (30080 + index in var.tenant_ids).
 fullnameOverride: test-app
 serviceAccount:
   name: test-app
@@ -8,7 +9,6 @@ pathPrefix: /tenant-b
 service:
   type: NodePort
   port: 8080
-  nodePort: 30081
 quota:
   enabled: true
 networkPolicy:

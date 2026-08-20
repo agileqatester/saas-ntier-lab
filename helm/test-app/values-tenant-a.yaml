@@ -1,4 +1,6 @@
-# ALB path /tenant-a* → NodePort 30080. Runs RLS migrate Job.
+# Example overlay for tenant a. Do not set service.nodePort — onboard_tenant.py
+# uses tofu output tenant_node_ports (30080 + index in var.tenant_ids).
+# First tenant_ids entry runs the RLS migrate Job.
 fullnameOverride: test-app
 serviceAccount:
   name: test-app
@@ -8,7 +10,6 @@ pathPrefix: /tenant-a
 service:
   type: NodePort
   port: 8080
-  nodePort: 30080
 quota:
   enabled: true
 networkPolicy:

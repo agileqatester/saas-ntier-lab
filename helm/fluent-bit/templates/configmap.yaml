@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  labels:
+    app.kubernetes.io/name: fluent-bit
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  /fluent-bit/parsers/parsers.conf
+        Health_Check  On
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*_tenant-*_*.log,/var/log/containers/*_default_test-app*.log
+        multiline.parser  cri
+        DB                /var/fluent-bit/flb.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Merge_Log           On
+        Keep_Log            Off
+        K8S-Logging.Parser  On
+        Labels              Off
+        Annotations         Off
+
+    [FILTER]
+        Name    grep
+        Match   kube.*
+        Exclude path /health
+
+    [FILTER]
+        Name    grep
+        Match   kube.*
+        Exclude log GET /health
+
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               kube.*
+        region              {{ .Values.region }}
+        log_group_name      {{ .Values.logGroup }}
+        log_stream_prefix   fluent-bit-
+        auto_create_group   false

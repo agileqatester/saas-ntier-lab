@@ -88,7 +88,7 @@ resource "aws_lb_listener" "http" {
       for_each = local.http_listener_mode == "fixed-response" ? [1] : []
       content {
         content_type = "text/plain"
-        message_body = "use /tenant-a/ or /tenant-b/"
+        message_body = var.fixed_response_body
         status_code  = "404"
       }
     }

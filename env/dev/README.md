@@ -7,7 +7,7 @@ Do **not** run OpenTofu in this directory. Use the stacks:
 | [network/](network/) | `tofu apply` once; keep | ~$0 (VPC/subnets/IGW) + ~$1 if remote state/KMS |
 | [workload/](workload/) | `tofu apply` for a test; `tofu destroy` after | NAT, EKS, ALB, optional RDS |
 
-After RDS: `helm/test-app/onboard-tenant.sh` (k8s half; IAM is OpenTofu `for_each`). Paths `/tenant-a*` and `/tenant-b*` on the ALB. Steps and checks: root [README — Pooled tenants](../../README.md#pooled-tenants).
+After RDS: add tenants with OpenTofu `tenant_ids` then `onboard_tenant.py` (see root [README — Add a tenant](../../README.md#add-a-tenant)). IAM is OpenTofu `for_each`; the script reads `tofu output -json`.
 
 ```bash
 cp network/terraform.tfvars.example network/terraform.tfvars

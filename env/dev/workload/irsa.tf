@@ -1,8 +1,5 @@
 # Per-tenant IRSA + Secrets Manager. Master RDS secret is only for the migrate Job.
-
-locals {
-  tenants = var.enable_rds ? toset(["a", "b"]) : toset([])
-}
+# Tenant set is local.tenants (var.tenant_ids when enable_rds).
 
 resource "random_password" "tenant_db" {
   for_each = local.tenants
@@ -92,7 +89,7 @@ data "aws_iam_policy_document" "migrator_assume" {
     condition {
       test     = "StringEquals"
       variable = "${module.eks.oidc_provider_url}:sub"
-      values   = ["system:serviceaccount:tenant-a:test-app-migrate"]
+      values   = ["system:serviceaccount:tenant-${local.first_tenant}:test-app-migrate"]
     }
     condition {
       test     = "StringEquals"
