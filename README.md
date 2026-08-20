@@ -2,7 +2,7 @@
 
 AWS n-tier lab: VPC, NAT instance, EKS, RDS, Secrets Manager, Helm. Designed and deployed a cost-optimized, multi-tenant EKS platform featuring path-based ALB routing, Granular IRSA least-privilege access, and PostgreSQL Row-Level Security (RLS) to guarantee strict tenant isolation on shared compute.
 
-This repository is a **personal lab**, not a production account.
+This repository is a **personal lab**, not a production account.This IaC in Terraform/HCL/Tofu implamentation. 
 
 ## Architecture
 
