@@ -30,8 +30,6 @@ Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architectur
 
 ## What’s next
 
-## What's next
-
 Same shared platform. No rewrite. Pooled multi-tenancy — routing, network isolation, IAM scoping, and row-level data isolation — is done and tested (see Validation below). What's left is edge/network hardening:
 
 1. **HTTPS on the ALB** — ACM on a domain you **own**. A Route 53 private zone does not get a public cert and does not resolve from your laptop.
