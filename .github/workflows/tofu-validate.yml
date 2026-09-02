@@ -1,40 +1,79 @@
-name: tofu-validate
+name: iac-validate
 
 on:
   push:
     paths:
-      - "env/dev/**"
+      - "live/**"
       - "modules/**"
       - "bootstrap/**"
+      - "helm/**"
       - ".github/workflows/tofu-validate.yml"
   pull_request:
     paths:
-      - "env/dev/**"
+      - "live/**"
       - "modules/**"
       - "bootstrap/**"
+      - "helm/**"
       - ".github/workflows/tofu-validate.yml"
 
 jobs:
-  validate:
+  fmt-modules:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        dir:
-          - env/dev/network
-          - env/dev/workload
-          - bootstrap
     steps:
       - uses: actions/checkout@v4
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: 1.12.5
-      - name: fmt
-        working-directory: ${{ matrix.dir }}
-        run: tofu fmt -check -recursive
+      - name: tofu fmt
+        run: tofu fmt -check -recursive modules bootstrap
+
+  bootstrap-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.5
       - name: init
-        working-directory: ${{ matrix.dir }}
+        working-directory: bootstrap
         run: tofu init -backend=false
       - name: validate
-        working-directory: ${{ matrix.dir }}
+        working-directory: bootstrap
         run: tofu validate
+
+  terragrunt-validate:
+    runs-on: ubuntu-latest
+    env:
+      # Dummy /32 so get_env("MY_IP") succeeds; never used against AWS in this job.
+      MY_IP: "127.0.0.1/32"
+      TG_NON_INTERACTIVE: "true"
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - live/dev/network
+          - live/dev/workload
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.5
+      - name: Install Terragrunt
+        env:
+          TG_VERSION: "1.1.4"
+        run: |
+          curl -sSLo terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+      - name: hclfmt
+        if: matrix.dir == 'live/dev/network'
+        working-directory: live
+        run: terragrunt hcl format --check --exclude-dir .terragrunt-cache
+      - name: hcl validate
+        if: matrix.dir == 'live/dev/network'
+        working-directory: live
+        run: terragrunt hcl validate --non-interactive
+      - name: validate
+        working-directory: ${{ matrix.dir }}
+        run: terragrunt validate --non-interactive

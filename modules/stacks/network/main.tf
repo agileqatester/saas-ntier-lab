@@ -1,5 +1,5 @@
 module "vpc" {
-  source = "../../../modules/vpc"
+  source = "../../vpc"
 
   name_prefix = var.name_prefix
   region      = var.aws_region

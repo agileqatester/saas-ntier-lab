@@ -1,10 +1,16 @@
-# Terraform / OpenTofu state and caches
+# Terraform / OpenTofu / Terragrunt state and caches
 *.tfstate
 *.tfstate.*
 .terraform/
+.terragrunt-cache/
+.terraform-state/
 crash.log
 override.tf
 override.tf.json
+
+# Remote-state and laptop-only Terragrunt overrides (never commit)
+backend.hcl
+config.local.yaml
 
 # Real values (IPs, bucket names, secrets) — NEVER commit
 terraform.tfvars
@@ -19,6 +25,8 @@ crash.tf
 # Documented examples only
 !terraform.tfvars.example
 !*.tfvars.example
+!backend.hcl.example
+!config.local.yaml.example
 
 # SSH / TLS private material
 *.pem
@@ -43,6 +51,10 @@ secrets.yaml
 kubeconfig
 *.kubeconfig
 admin.conf
+
+# Python
+__pycache__/
+*.py[cod]
 
 # macOS / editor noise
 .DS_Store

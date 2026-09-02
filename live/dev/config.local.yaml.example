@@ -1,0 +1,10 @@
+# Copy to config.local.yaml (gitignored). Deep-merged over config.yaml
+# for this laptop only. Do not put my_ip or AWS account identifiers here.
+
+workload:
+  enable_rds: true
+  # tenant_ids:
+  #   - a
+  #   - b
+  #   - c
+  #   - d

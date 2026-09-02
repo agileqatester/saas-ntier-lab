@@ -90,9 +90,9 @@ output "helm_install" {
   description = "Onboard var.tenant_ids after nodes are Ready. Uses helm/test-app/onboard_tenant.py"
   value = templatefile("${path.module}/helm_install.tftpl", {
     enable_rds      = var.enable_rds
-    chart           = "${path.module}/../../../helm/test-app"
-    onboard         = "${path.module}/../../../helm/test-app/onboard_tenant.py"
-    fluent_chart    = "${path.module}/../../../helm/fluent-bit"
+    chart           = var.helm_test_app_chart
+    onboard         = var.onboard_script
+    fluent_chart    = var.helm_fluent_bit_chart
     fluent_bit_role = aws_iam_role.fluent_bit.arn
     log_group       = aws_cloudwatch_log_group.app.name
     tenant_ids      = var.tenant_ids

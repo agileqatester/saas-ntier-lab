@@ -36,8 +36,8 @@ This directory contains the Terraform configuration to bootstrap the S3 bucket a
    tofu apply
    ```
 
-6. **Point the stacks at this backend:**
-   Uncomment and fill `backend.tf` in `env/dev/network` and `env/dev/workload` (different `key` values), then `tofu init` in each stack.
+6. **Point Terragrunt at this backend:**
+   Copy `live/backend.hcl.example` to `live/backend.hcl` (gitignored) and fill `bucket`, `dynamodb_table`, and `kms_key_id` from the outputs below. Terragrunt generates `backend.tf` per unit and will **not** create or mutate this bucket.
 
 ## What Gets Created
 
@@ -74,9 +74,9 @@ This directory contains the Terraform configuration to bootstrap the S3 bucket a
 
 Once the backend resources are created:
 
-1. Uncomment and fill `backend.tf` in `env/dev/network` and `env/dev/workload` (different `key` values)
-2. Run `tofu init -migrate-state` (or `terraform init -migrate-state`) in each stack
-3. Verify: `tofu state list`
+1. Copy `live/backend.hcl.example` to `live/backend.hcl` and fill from `tofu output`
+2. Run `terragrunt init` in `live/dev/network` and `live/dev/workload` (add `-migrate-state` if you already had local state)
+3. Verify: `terragrunt state list`
 
 ## Troubleshooting
 

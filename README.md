@@ -2,7 +2,7 @@
 
 AWS n-tier lab: VPC, NAT instance, EKS, RDS, Secrets Manager, Helm. Designed and deployed a cost-optimized, multi-tenant EKS platform featuring path-based ALB routing, granular IRSA least-privilege access, and PostgreSQL Row-Level Security (RLS) to guarantee strict tenant isolation on shared compute.
 
-This repository is a **personal lab**, not a production account. IaC is Terraform/HCL; examples use OpenTofu (`tofu`).
+This repository is a **personal lab**, not a production account. IaC is OpenTofu modules driven by **Terragrunt** live units. Bootstrap (state bucket) is still plain OpenTofu.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ Private subnets egress via the NAT instance; S3 uses a **gateway** endpoint (no 
 
 **RDS vs S3/SNS:** RDS is an AWS-managed engine, but the instance still has **ENIs in your private subnets** and a security group (pods reach it on 5432 inside the VPC). S3, SNS, and CloudWatch are regional APIs — they sit outside the VPC. The diagram puts RDS with the other managed icons; the dashed line back into **1a/1b private subnets** is the network attachment. Off by default (`enable_rds`).
 
-**Pooled tenants (same platform):** namespaces from `var.tenant_ids` (default `a` / `b` / `c`) on one shared EKS cluster, one shared Postgres — no stack-per-tenant, no database-per-tenant. Isolation is enforced at four independent layers — network, identity, data, and compute — so a gap in one doesn't collapse the whole boundary; see [Pooled tenants](#pooled-tenants) below for the full breakdown. The public ALB is path-based on the default ELB DNS name — `/tenant-<id>*` → NodePort **30080 + index** — so no purchased domain is required. `helm/test-app/onboard_tenant.py` handles the k8s half of onboarding (reads `tofu output -json`); IAM/secrets stay in OpenTofu `for_each` so a new tenant is one list entry plus one script invocation, not a hand-wired stack.
+**Pooled tenants (same platform):** namespaces from `var.tenant_ids` (default `a` / `b` / `c`) on one shared EKS cluster, one shared Postgres — no stack-per-tenant, no database-per-tenant. Isolation is enforced at four independent layers — network, identity, data, and compute — so a gap in one doesn't collapse the whole boundary; see [Pooled tenants](#pooled-tenants) below for the full breakdown. The public ALB is path-based on the default ELB DNS name — `/tenant-<id>*` → NodePort **30080 + index** — so no purchased domain is required. `helm/test-app/onboard_tenant.py` handles the k8s half of onboarding (reads `terragrunt output -json`); IAM/secrets stay in OpenTofu `for_each` so a new tenant is one list entry plus one script invocation, not a hand-wired stack.
 
 Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architecture.jpg](architecture.jpg) (GitHub README image). Draw.io source: [architecture.mmd](architecture.mmd).
 
@@ -39,21 +39,25 @@ Same shared platform. No rewrite. Pooled multi-tenancy — routing, network isol
 ## Layout
 
 ```
-bootstrap/          # S3 + DynamoDB + KMS for remote state (~$1/month). Public-repo path.
-modules/            # Reusable modules (VPC, NAT, EKS, RDS, ALB, WAF, …)
-env/dev/network/    # Keep: VPC, subnets, IGW, S3 gateway endpoint (Stage 2+)
-env/dev/workload/   # Destroy after tests: NAT, EKS, ALB, optional RDS
-helm/test-app/      # App chart (NodePort 30080+index via tofu; onboard_tenant.py)
-helm/fluent-bit/    # DaemonSet → CloudWatch Logs (/name_prefix/app), tenant_id in JSON
+bootstrap/              # S3 + DynamoDB + KMS for remote state (~$1/month). Plain OpenTofu.
+modules/                # Primitive modules (VPC, NAT, EKS, RDS, ALB, …)
+modules/stacks/         # Composition modules (no provider/backend)
+live/root.hcl           # DRY remote state + provider generation
+live/dev/config.yaml    # All non-secret Dev values; units reference HCL modules
+live/dev/network/       # Keep: VPC, subnets, IGW, S3 gateway endpoint
+live/dev/workload/      # Destroy after tests: NAT, EKS, ALB, optional RDS
+helm/test-app/          # App chart (NodePort 30080+index; onboard_tenant.py)
+helm/fluent-bit/        # DaemonSet → CloudWatch Logs (/name_prefix/app), tenant_id in JSON
 ```
 
-Do **not** `tofu apply` from the repo root. The root `main.tf` is the previous monolith and is not the Dev path anymore.
+Do **not** `tofu apply` from the repo root or from `modules/`. Dev apply path is `live/dev/<unit>`.
 
 Dev uses **SSM Session Manager on the EKS node** for host debug, not a public SSH bastion. NAT is egress only.
 
 ## Prerequisites
 
 - OpenTofu >= 1.6 (`tofu version`). HashiCorp Terraform is not required.
+- Terragrunt >= 1.0 (`terragrunt --version`). It invokes `tofu` (`terraform_binary` in `live/root.hcl`).
 - AWS CLI v2, credentials configured (`aws sts get-caller-identity`)
 - kubectl (when you reach EKS)
 - Helm 3+ (when you deploy the test app)
@@ -66,7 +70,7 @@ Dev uses **SSM Session Manager on the EKS node** for host debug, not a public SS
 | VPC, subnets, route tables, IGW, S3 **gateway** endpoint | NAT instance, public IPv4, EKS, RDS, ALB |
 | Bootstrap state bucket / lock table / KMS (~$1/month) | Interface VPC endpoints (not used in Dev) |
 
-EKS has **no create fee**. The control plane is **$0.10/hour** (~$73/month) the whole time the cluster exists, including the ~15 minutes AWS spends creating it. Kubernetes versions in **extended** support are **$0.60/hour** — Dev pins a **standard-support** version (1.35). Destroy `env/dev/workload` when you stop; do not leave EKS overnight.
+EKS has **no create fee**. The control plane is **$0.10/hour** (~$73/month) the whole time the cluster exists, including the ~15 minutes AWS spends creating it. Kubernetes versions in **extended** support are **$0.60/hour** — Dev pins a **standard-support** version (1.35). Destroy `live/dev/workload` when you stop; do not leave EKS overnight. Do **not** `terragrunt run --all -- destroy` from `live/dev` — that would delete the VPC.
 
 App logs in CloudWatch are **cents** on this lab (ingest **$0.50/GB**, storage **$0.03/GB-month**, 7-day retention). Fluent Bit is a DaemonSet on the existing node — no extra EC2. Do **not** turn on Container Insights.
 
@@ -74,9 +78,11 @@ Public subnets + IGW are required for the NAT instance (private outbound: image 
 
 ## State (S3 for the public repo)
 
-This laptop can keep using **local** state until you publish. The public GitHub copy should use the **S3 backend**: apply `bootstrap/` once, then uncomment `backend.tf` in each stack (different `key`s), then `tofu init -migrate-state`.
+This laptop can keep using **local** state until you publish (Terragrunt writes it under `live/.terraform-state/`, gitignored). The public GitHub copy should use the **S3 backend**: apply `bootstrap/` once, copy `live/backend.hcl.example` to `live/backend.hcl` (gitignored), fill bucket / lock table / KMS ARN from bootstrap outputs.
 
-Do **not** commit `.tfstate`, real bucket names, or `terraform.tfvars`. The bucket stays private; state can contain resource IDs and the EKS API CIDR. Encryption and DynamoDB locking are created by bootstrap.
+Terragrunt generates a unique `key` per unit (`ntier-app/dev/network/terraform.tfstate`, …) and is configured **not** to create or mutate the bucket — `bootstrap/` owns KMS, public-access block, versioning, and lifecycle.
+
+Do **not** commit `.tfstate`, `backend.hcl`, `config.local.yaml`, or `MY_IP`. The bucket stays private; state can contain resource IDs and the EKS API CIDR.
 
 ```bash
 # 1) Remote state (once per account). Public-repo default.
@@ -84,36 +90,29 @@ cd bootstrap
 cp terraform.tfvars.example terraform.tfvars
 # set a globally unique state_bucket_name (yours, not committed)
 tofu init && tofu apply
-# then uncomment backend.tf in env/dev/network and env/dev/workload
-# tofu init -migrate-state in each stack
+# then: cp live/backend.hcl.example live/backend.hcl and fill from tofu output
 
 # 2) Network (Stage 2 — VPC). Leave applied.
-cd env/dev/network
-cp terraform.tfvars.example terraform.tfvars
-tofu init
-tofu plan  -var-file=terraform.tfvars
-tofu apply -var-file=terraform.tfvars
+cd live/dev/network
+terragrunt apply
 
-# 3) Workload (NAT + EKS + ALB). Pass my_ip on the CLI — do not write it to tfvars.
-cd env/dev/workload
-cp terraform.tfvars.example terraform.tfvars
-tofu init
-tofu apply -var-file=terraform.tfvars \
-  -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
+# 3) Workload (NAT + EKS + ALB). Pass MY_IP via the environment — do not write it to config.yaml.
+export MY_IP="$(curl -sS https://checkip.amazonaws.com)/32"
+cd ../workload
+terragrunt apply
 # ~15 min, then (helm_install refreshes kubeconfig — recreate invalidates the old API DNS):
-eval "$(tofu output -raw helm_install)"
-curl -s "$(tofu output -raw alb_url)/tenant-a/health"
-tofu destroy -var-file=terraform.tfvars \
-  -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
+eval "$(terragrunt output -raw helm_install)"
+curl -s "$(terragrunt output -raw alb_url)/tenant-a/health"
+terragrunt destroy
 ```
 
-If you omit `-var`, OpenTofu prompts for `my_ip`. Use `x.x.x.x/32`. Keep `env/dev/network` applied.
+If `MY_IP` is unset, Terragrunt exits before plan. Use `x.x.x.x/32`. Keep `live/dev/network` applied.
 
-Default workload: NAT instance, EKS (one On-Demand `t4g.small`), HTTP ALB (open to your `/32` only; paths `/tenant-<id>*` from `var.tenant_ids`, default 404), S3 access logs, SNS 5xx alarm. **RDS is off.** No port-forward — `curl http://<alb_dns>/tenant-a/health`.
+Default workload: NAT instance, EKS (one On-Demand `t4g.small`), HTTP ALB (open to your `/32` only; paths `/tenant-<id>*` from `tenant_ids`, default 404), S3 access logs, SNS 5xx alarm. **RDS is off.** No port-forward — `curl http://<alb_dns>/tenant-a/health`.
 
-To add Postgres, set `enable_rds = true` in `terraform.tfvars`, apply again (same `my_ip` `-var`), then `eval "$(tofu output -raw helm_install)"`. That flag creates RDS, per-tenant secrets/IRSA, the migrator role, and the **vpc-cni** addon (`enableNetworkPolicy`). `list-addons` is empty until that addon resource exists — do not `tofu import` it.
+To add Postgres, copy `live/dev/config.local.yaml.example` to `live/dev/config.local.yaml` and set `enable_rds: true` (gitignored), apply again (same `MY_IP`), then `eval "$(terragrunt output -raw helm_install)"`. That flag creates RDS, per-tenant secrets/IRSA, the migrator role, and the **vpc-cni** addon (`enableNetworkPolicy`). `list-addons` is empty until that addon resource exists — do not `tofu import` it.
 
-With RDS on, `helm_install` refreshes kubeconfig, waits for a Ready node, and runs `onboard_tenant.py --all` (every `var.tenant_ids` entry). Destroy/recreate of the cluster gets a **new** API hostname; an old `~/.kube/config` will fail with `no such host`.
+With RDS on, `helm_install` refreshes kubeconfig, waits for a Ready node, and runs `onboard_tenant.py --all` (every `tenant_ids` entry). Destroy/recreate of the cluster gets a **new** API hostname; an old `~/.kube/config` will fail with `no such host`.
 
 ## Pooled tenants
 
@@ -128,25 +127,30 @@ The bootstrap migration Job (running as its own IRSA-scoped service account on t
 
 ### Add a tenant
 
-Two halves. OpenTofu owns IAM, Secrets Manager, ALB path, and NodePort (`30080 + index` in `tenant_ids`). `helm/test-app/onboard_tenant.py` owns the namespace, Helm release, and NetworkPolicy. The script does **not** take `IRSA_*` env vars; it reads `tofu output -json` (`tenant_irsa_role_arns`, `tenant_secret_names`, `tenant_node_ports`, `rds_host`, migrator role).
+Two halves. OpenTofu owns IAM, Secrets Manager, ALB path, and NodePort (`30080 + index` in `tenant_ids`). `helm/test-app/onboard_tenant.py` owns the namespace, Helm release, and NetworkPolicy. The script does **not** take `IRSA_*` env vars; it reads `terragrunt output -json` (`tenant_irsa_role_arns`, `tenant_secret_names`, `tenant_node_ports`, `rds_host`, migrator role).
 
 **First time** (empty cluster, RDS already on): apply, then onboard every id:
 
 ```bash
-cd env/dev/workload
-tofu apply -var-file=terraform.tfvars \
-  -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
-eval "$(tofu output -raw helm_install)"
+export MY_IP="$(curl -sS https://checkip.amazonaws.com)/32"
+cd live/dev/workload
+terragrunt apply
+eval "$(terragrunt output -raw helm_install)"
 # helm_install already runs: python3 .../onboard_tenant.py --all
 ```
 
 **Add one more** (example: `d` while `a`/`b`/`c` are live):
 
-1. Edit `env/dev/workload/terraform.tfvars` (do not commit it):
+1. Edit `live/dev/config.local.yaml` (do not commit it):
 
-   ```hcl
-   enable_rds  = true
-   tenant_ids  = ["a", "b", "c", "d"]
+   ```yaml
+   workload:
+     enable_rds: true
+     tenant_ids:
+       - a
+       - b
+       - c
+       - d
    ```
 
    Keep the existing keys in the same order. NodePort for `d` is **30083**. The first id still runs migrate.
@@ -154,16 +158,16 @@ eval "$(tofu output -raw helm_install)"
 2. Apply so OpenTofu creates the IRSA role, secret, ALB rule `/tenant-d*`, and SG/NodePort:
 
    ```bash
-   cd env/dev/workload
-   tofu apply -var-file=terraform.tfvars \
-     -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
+   export MY_IP="$(curl -sS https://checkip.amazonaws.com)/32"
+   cd live/dev/workload
+   terragrunt apply
    ```
 
 3. Kubernetes onboard (refreshes tenant `a` so migrate sees `d`'s secret, then installs `tenant-d`):
 
    ```bash
    python3 ../../../helm/test-app/onboard_tenant.py d
-   curl -sS "$(tofu output -raw alb_url)/tenant-d/health"
+   curl -sS "$(terragrunt output -raw alb_url)/tenant-d/health"
    ```
 
    Expect `tenant_id":"d"` and `database":"connected"`.
@@ -172,8 +176,10 @@ eval "$(tofu output -raw helm_install)"
 
 ### Validation
 
+Run these from `live/dev/workload` after apply:
+
 ```bash
-ALB="$(tofu output -raw alb_url)"
+ALB="$(terragrunt output -raw alb_url)"
 
 curl -sS "$ALB/tenant-a/health"    # tenant_id a, database connected
 curl -sS "$ALB/tenant-b/health"    # tenant_id b
@@ -220,7 +226,7 @@ Do **not** use the log group **Log streams** tab or Live Tail for this proof. Th
 Generate traffic that is not `/health`, wait ~30s:
 
 ```bash
-ALB="$(tofu output -raw alb_url)"
+ALB="$(terragrunt output -raw alb_url)"
 curl -sS "$ALB/tenant-a/"
 curl -sS "$ALB/tenant-b/"
 curl -sS "$ALB/tenant-c/"

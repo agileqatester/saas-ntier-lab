@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Kubernetes onboard for one pooled tenant. IAM/secrets stay in OpenTofu.
 
-Looks up IRSA role ARNs and secret names from `tofu output -json` in the
-workload stack. Do not export IRSA_* / SECRET_* by hand.
+Looks up IRSA role ARNs and secret names from `terragrunt output -json`
+(or `tofu output -json`) in the workload unit. Do not export IRSA_* / SECRET_* by hand.
 
-Run from env/dev/workload after apply (enable_rds = true):
+Run from live/dev/workload after apply (enable_rds = true):
 
   python3 ../../../helm/test-app/onboard_tenant.py --all
   python3 ../../../helm/test-app/onboard_tenant.py c
@@ -31,17 +31,26 @@ def run_out(cmd: list[str], **kwargs) -> str:
     return subprocess.check_output(cmd, text=True, **kwargs).strip()
 
 
-def tofu_bin() -> str:
+def output_cmd(work_dir: str) -> list[str]:
+    """Prefer Terragrunt when the unit has terragrunt.hcl (live/dev/workload)."""
+    if os.path.isfile(os.path.join(work_dir, "terragrunt.hcl")):
+        tg = shutil.which("terragrunt")
+        if not tg:
+            sys.exit("terragrunt.hcl found but terragrunt is not on PATH")
+        return [tg, "output", "-json"]
     for name in ("tofu", "terraform"):
         path = shutil.which(name)
         if path:
-            return path
+            return [path, "output", "-json"]
     sys.exit("tofu (or terraform) not found on PATH")
 
 
 def tofu_outputs(tofu_dir: str) -> dict:
-    print("+ tofu output -json", file=sys.stderr)
-    raw = run_out([tofu_bin(), "output", "-json"], cwd=tofu_dir)
+    cmd = output_cmd(tofu_dir)
+    print("+", " ".join(cmd), file=sys.stderr)
+    env = os.environ.copy()
+    env.setdefault("TG_NON_INTERACTIVE", "true")
+    raw = run_out(cmd, cwd=tofu_dir, env=env)
     parsed = json.loads(raw)
     return {key: item["value"] for key, item in parsed.items()}
 
@@ -74,7 +83,7 @@ def node_ip() -> str:
 def require(outputs: dict, key: str):
     value = outputs.get(key)
     if value in (None, "", {}, []):
-        sys.exit(f"tofu output {key!r} is empty. Is enable_rds true? Apply from env/dev/workload.")
+        sys.exit(f"output {key!r} is empty. Is enable_rds true? Apply from live/dev/workload.")
     return value
 
 
@@ -178,7 +187,7 @@ def onboard(tenant: str, outputs: dict, ip: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Onboard a pooled tenant using tofu outputs (no IRSA_* env vars)."
+        description="Onboard a pooled tenant using Terragrunt/tofu outputs (no IRSA_* env vars)."
     )
     parser.add_argument(
         "tenant",
@@ -188,12 +197,12 @@ def main() -> int:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="onboard every id in tofu output tenant_ids (first id runs migrate)",
+        help="onboard every id in output tenant_ids (first id runs migrate)",
     )
     parser.add_argument(
         "--tofu-dir",
         default=".",
-        help="OpenTofu stack directory (default: cwd; run from env/dev/workload)",
+        help="Terragrunt unit or OpenTofu stack directory (default: cwd; run from live/dev/workload)",
     )
     args = parser.parse_args()
     if bool(args.tenant) == args.all:

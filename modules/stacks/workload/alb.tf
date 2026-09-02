@@ -91,11 +91,11 @@ resource "aws_s3_bucket_policy" "alb_logs" {
 
 module "alb" {
   count  = var.enable_alb ? 1 : 0
-  source = "../../../modules/alb"
+  source = "../../alb"
 
   name_prefix            = var.name_prefix
-  vpc_id                 = data.terraform_remote_state.network.outputs.vpc_id
-  public_subnet_ids      = data.terraform_remote_state.network.outputs.public_subnet_ids
+  vpc_id                 = var.vpc_id
+  public_subnet_ids      = var.public_subnet_ids
   enable_http            = true
   enable_https           = false
   http_redirect_to_https = false

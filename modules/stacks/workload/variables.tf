@@ -15,6 +15,26 @@ variable "vpc_cidr" {
   default     = "10.0.0.0/16"
 }
 
+variable "vpc_id" {
+  description = "VPC ID from the network unit (Terragrunt dependency). Not read from remote state."
+  type        = string
+}
+
+variable "public_subnet_ids" {
+  description = "Public subnet IDs from the network unit"
+  type        = list(string)
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs from the network unit"
+  type        = list(string)
+}
+
+variable "private_route_table_ids" {
+  description = "Private route table IDs from the network unit (NAT default route)"
+  type        = list(string)
+}
+
 variable "nat_instance_type" {
   description = "NAT instance size. t4g.nano is cheapest for Dev."
   type        = string
@@ -51,7 +71,7 @@ variable "rds_instance_class" {
 }
 
 variable "enable_rds" {
-  description = "Postgres + per-tenant secrets/IRSA + migrator role. Default false (ALB session). Set true in terraform.tfvars, apply, then re-run tofu output -raw helm_install."
+  description = "Postgres + per-tenant secrets/IRSA + migrator role. Default false (ALB session). Set true in config.local.yaml, apply, then re-run terragrunt output -raw helm_install."
   type        = bool
   default     = false
 }
@@ -75,4 +95,19 @@ variable "enable_alb" {
   description = "Internet-facing HTTP ALB. Path rules /tenant-<id>* from var.tenant_ids (NodePorts 30080+index). Ingress is var.my_ip. Default action 404."
   type        = bool
   default     = true
+}
+
+variable "helm_test_app_chart" {
+  description = "Absolute path to helm/test-app. Terragrunt sets this from get_repo_root(); do not rely on path.module (cache copy)."
+  type        = string
+}
+
+variable "helm_fluent_bit_chart" {
+  description = "Absolute path to helm/fluent-bit."
+  type        = string
+}
+
+variable "onboard_script" {
+  description = "Absolute path to helm/test-app/onboard_tenant.py."
+  type        = string
 }

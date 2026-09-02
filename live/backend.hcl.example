@@ -1,0 +1,12 @@
+# Copy to backend.hcl (gitignored) after `cd bootstrap && tofu apply`.
+# Fill from: tofu output state_bucket_name / dynamodb_table_name / kms_key_arn
+#
+# Terragrunt will NOT create or mutate the bucket. bootstrap/ is the only writer
+# of those resources (CMK, public-access block, versioning, lifecycle).
+
+locals {
+  bucket         = "your-org-ntier-app-terraform-state"
+  dynamodb_table = "terraform-state-locks"
+  region         = "us-east-1"
+  kms_key_id     = "arn:aws:kms:us-east-1:ACCOUNT_ID:key/KEY_ID"
+}

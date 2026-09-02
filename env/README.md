@@ -1,18 +1,15 @@
 # How to apply
 
-Apply from a **stack directory**, not the repo root and not `env/dev/` itself. The HCL is Terraform; commands below use OpenTofu (`tofu`). `terraform` is the same workflow.
+Apply from **Terragrunt live units**, not the repo root and not `modules/`.
 
 ```bash
-cd env/dev/network    # keep (free VPC)
-tofu init
-tofu plan -var-file=terraform.tfvars
+cd live/dev/network
+terragrunt apply
 
-cd ../workload        # destroy after each test (NAT / EKS / ALB; RDS off unless enable_rds)
-tofu init
-tofu plan -var-file=terraform.tfvars \
-  -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
-tofu destroy -var-file=terraform.tfvars \
-  -var="my_ip=$(curl -s https://checkip.amazonaws.com)/32"
+export MY_IP="$(curl -sS https://checkip.amazonaws.com)/32"
+cd ../workload
+terragrunt apply
+terragrunt destroy
 ```
 
-Copy `terraform.tfvars.example` to `terraform.tfvars` in that directory first (`*.tfvars` is gitignored).
+`env/` used to hold OpenTofu stacks; those compositions now live in `modules/stacks/` and are driven from `live/`. See [live/README.md](../live/README.md).

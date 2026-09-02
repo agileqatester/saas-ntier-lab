@@ -1,0 +1,54 @@
+# Dev stack configuration.
+#
+# This file is the source of truth for non-secret values. Each live unit
+# (network/, workload/) is a thin terragrunt.hcl that:
+#   1. reads this YAML
+#   2. points terraform.source at the HCL module in `units.<name>.terraform`
+#   3. passes the matching section as OpenTofu inputs
+#
+# Do not put secrets, bucket names, or my_ip here.
+# Laptop overrides: copy config.local.yaml.example → config.local.yaml (gitignored).
+# Laptop IP: export MY_IP="$(curl -sS https://checkip.amazonaws.com)/32"
+
+metadata:
+  environment: dev
+  aws_region: us-east-1
+  name_prefix: ntier-dev
+
+# OpenTofu composition modules, relative to the repo root.
+# `//` tells Terragrunt to copy `modules/` into the cache so nested
+# `source = "../../vpc"` paths inside the stack still resolve.
+units:
+  network:
+    terraform: modules//stacks/network
+  workload:
+    terraform: modules//stacks/workload
+    depends_on: network
+
+network:
+  vpc_cidr: "10.0.0.0/16"
+  azs:
+    - us-east-1a
+    - us-east-1b
+  public_subnet_cidrs:
+    - "10.0.1.0/24"
+    - "10.0.2.0/24"
+  private_subnet_cidrs:
+    - "10.0.11.0/24"
+    - "10.0.12.0/24"
+
+workload:
+  nat_instance_type: t4g.nano
+  kubernetes_version: "1.35"
+  eks_node_instance_type: t4g.small
+  rds_instance_class: db.t4g.micro
+  enable_alb: true
+  enable_rds: false
+  tenant_ids:
+    - a
+    - b
+    - c
+  helm:
+    test_app: helm/test-app
+    fluent_bit: helm/fluent-bit
+    onboard: helm/test-app/onboard_tenant.py
