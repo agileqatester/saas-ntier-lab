@@ -2,7 +2,9 @@
 
 AWS n-tier lab: VPC, NAT instance, EKS, RDS, Secrets Manager, Helm. Designed and deployed a cost-optimized, multi-tenant EKS platform featuring path-based ALB routing, granular IRSA least-privilege access, and PostgreSQL Row-Level Security (RLS) to guarantee strict tenant isolation on shared compute.
 
-This repository is a **personal lab**, not a production account. IaC is OpenTofu modules driven by **Terragrunt** live units. Bootstrap (state bucket) is still plain OpenTofu.
+This repository is a **personal lab**, not a production account.
+
+**This branch converts the former OpenTofu stacks (`env/dev/network`, `env/dev/workload`) to Terragrunt.** OpenTofu is still the engine that creates AWS resources. Terragrunt is the wrapper: one YAML file for Dev values, generated backends/providers, and ordered apply. The VPC/EKS/RDS modules and the tenant isolation design did not change. Bootstrap (state bucket) stays plain OpenTofu — it has to exist before remote state.
 
 ## Architecture
 
@@ -36,21 +38,62 @@ Same shared platform. No rewrite. Pooled multi-tenancy — routing, network isol
 2. **PrivateLink provider** — enterprise customers attach privately; they never use the IGW.
 3. **Shrink NAT** — interface VPC endpoints for ECR/EKS/SSM APIs so private nodes do not need internet egress; then NAT can go.
 
+## OpenTofu → Terragrunt
+
+OpenTofu (HCL) still describes *what* AWS should look like. Terragrunt describes *how* those modules are applied in Dev: which values, which state key, which unit runs first.
+
+| Layer | Path | Role |
+|-------|------|------|
+| Values | [`live/dev/config.yaml`](live/dev/config.yaml) | Non-secret Dev config (CIDRs, sizes, `tenant_ids`, paths to HCL modules). Edit this, not scattered tfvars. |
+| Live units | `live/dev/network`, `live/dev/workload` | Thin `terragrunt.hcl`: read the YAML, set `terraform.source`, pass inputs. Workload `depends_on` network. |
+| Glue | [`live/root.hcl`](live/root.hcl) | Generates `provider.tf` + backend. Local state until you add gitignored `live/backend.hcl`. |
+| Composition | `modules/stacks/{network,workload}` | The old `env/dev/*` `.tf` files, without provider/backend. |
+| Primitives | `modules/{vpc,nat,eks,rds,alb}` | Unchanged reusable modules. |
+| Bootstrap | `bootstrap/` | S3 + DynamoDB + KMS. Still `tofu apply` here only. |
+
+**What moved**
+
+| Before (OpenTofu stacks) | After (this branch) |
+|--------------------------|---------------------|
+| `env/dev/network` + `terraform.tfvars` | `live/dev/network` + `config.yaml` `network:` |
+| `env/dev/workload` + `-var my_ip=…` | `live/dev/workload` + `export MY_IP=…/32` |
+| Commented `backend.tf` per stack | `live/root.hcl` generates the backend; keys stay `ntier-app/dev/<unit>/terraform.tfstate` |
+| `data.terraform_remote_state` → `../network/terraform.tfstate` | Terragrunt `dependency "network"` (works with local or S3 state) |
+| `tofu apply` / `tofu output` | `terragrunt apply` / `terragrunt output` from the unit dir |
+| `env/` apply path | `env/` is a pointer only. Do not apply there. |
+
+**Why wrap instead of rewrite.** Two stacks (keep VPC, destroy NAT/EKS) were already the right cost split. Terragrunt removes the duplicated region/CIDR/backend/provider blocks and stops `my_ip` from living in a file. AWS resources, IRSA, RLS, and Helm are the same.
+
+**Commands.** Terragrunt 1.x calls `tofu` (`terraform_binary` in `live/root.hcl`). HashiCorp Terraform is not required.
+
+| Intent | Command (from the unit directory) |
+|--------|-----------------------------------|
+| Plan / apply / destroy | `terragrunt plan` · `apply` · `destroy` |
+| Outputs (onboard script uses this) | `terragrunt output -json` · `-raw alb_url` |
+| Network then workload | `cd live/dev && terragrunt run --all -- apply` |
+| Destroy paid resources only | `cd live/dev/workload && terragrunt destroy` — **not** `--all destroy` (that deletes the VPC) |
+| Validate without AWS | `MY_IP=127.0.0.1/32 terragrunt validate` (workload mocks network outputs) |
+
+Laptop-only flags (`enable_rds`, extra tenants): copy [`live/dev/config.local.yaml.example`](live/dev/config.local.yaml.example) → `config.local.yaml` (gitignored). Never put `my_ip` or the state bucket name in YAML.
+
+If `MY_IP` is unset, Terragrunt exits before plan. Use `x.x.x.x/32`.
+
+Do **not** `tofu apply` from the repo root, `modules/`, or `modules/stacks/`. Dev apply path is `live/dev/<unit>`. More apply notes: [`live/README.md`](live/README.md).
+
 ## Layout
 
 ```
 bootstrap/              # S3 + DynamoDB + KMS for remote state (~$1/month). Plain OpenTofu.
 modules/                # Primitive modules (VPC, NAT, EKS, RDS, ALB, …)
-modules/stacks/         # Composition modules (no provider/backend)
-live/root.hcl           # DRY remote state + provider generation
-live/dev/config.yaml    # All non-secret Dev values; units reference HCL modules
+modules/stacks/         # Composition (former env/dev stacks, no provider/backend)
+live/root.hcl           # Generated provider + backend for every unit
+live/dev/config.yaml    # Dev values + terraform source paths (the YAML you edit)
 live/dev/network/       # Keep: VPC, subnets, IGW, S3 gateway endpoint
 live/dev/workload/      # Destroy after tests: NAT, EKS, ALB, optional RDS
+env/                    # Pointer only — old apply path, do not tofu apply here
 helm/test-app/          # App chart (NodePort 30080+index; onboard_tenant.py)
 helm/fluent-bit/        # DaemonSet → CloudWatch Logs (/name_prefix/app), tenant_id in JSON
 ```
-
-Do **not** `tofu apply` from the repo root or from `modules/`. Dev apply path is `live/dev/<unit>`.
 
 Dev uses **SSM Session Manager on the EKS node** for host debug, not a public SSH bastion. NAT is egress only.
 
@@ -249,8 +292,6 @@ fields tenant_id
 ```
 
 Pass: one row per tenant that you hit. Direct link: CloudWatch Logs Insights in `us-east-1` on `/ntier-dev/app`.
-
-## License
 
 ## License
 
