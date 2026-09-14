@@ -16,9 +16,9 @@ variable "vpc_cidr" {
 }
 
 variable "nat_instance_type" {
-  description = "NAT instance size. t4g.nano is cheapest for Dev."
+  description = "NAT instance size. Prefer t4g.micro: t4g.nano often OOMs during cloud-init dnf (iptables never installs)."
   type        = string
-  default     = "t4g.nano"
+  default     = "t4g.micro"
 }
 
 variable "my_ip" {

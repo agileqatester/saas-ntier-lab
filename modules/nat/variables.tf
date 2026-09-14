@@ -46,6 +46,6 @@ variable "nat_instance_ami" {
 
 variable "nat_instance_type" {
   type        = string
-  default     = "t4g.nano"
-  description = "Instance type for NAT instance (t4g.nano = ~$3.80/month, t4g.micro = ~$7.60/month)"
+  default     = "t4g.micro"
+  description = "NAT instance type. Prefer t4g.micro — t4g.nano often OOMs on cloud-init dnf (iptables missing)."
 }

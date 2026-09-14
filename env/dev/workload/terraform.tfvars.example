@@ -2,7 +2,8 @@ aws_region  = "us-east-1"
 name_prefix = "ntier-dev"
 vpc_cidr    = "10.0.0.0/16"
 
-nat_instance_type = "t4g.nano"
+# t4g.micro — nano often OOMs on cloud-init dnf (iptables missing → EKS nodes fail to join).
+nat_instance_type = "t4g.micro"
 
 # Do not put my_ip here. Pass it at apply time (see README).
 kubernetes_version     = "1.35"

@@ -47,3 +47,6 @@ admin.conf
 # macOS / editor noise
 .DS_Store
 .cursor/
+
+.venv-tests/
+.pytest_cache/

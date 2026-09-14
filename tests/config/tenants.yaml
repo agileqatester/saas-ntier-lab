@@ -1,0 +1,21 @@
+# Permanent QA tenants. IDs must match var.tenant_ids / Helm tenant.id.
+# Reachability is via ALB path (/tenant-<id>/...), not NodePort — so the suite
+# stays valid when the control plane replaces NodePort with Ingress/IP targets.
+
+environment:
+  # Override with TENANT_BASE_URL (e.g. http://ntier-....elb.amazonaws.com)
+  # or leave empty and set via tofu: export TENANT_BASE_URL=$(tofu -chdir=env/dev/workload output -raw alb_url)
+  base_url: ""
+  request_timeout_seconds: 10
+
+tenants:
+  tenant-a:
+    id: a
+    namespace: tenant-a
+    path_prefix: /tenant-a
+    secret_name: ntier-dev/rds/tenant-a
+  tenant-b:
+    id: b
+    namespace: tenant-b
+    path_prefix: /tenant-b
+    secret_name: ntier-dev/rds/tenant-b
