@@ -6,6 +6,11 @@ data "terraform_remote_state" "network" {
   }
 }
 
+data "aws_subnet" "public" {
+  for_each = toset(data.terraform_remote_state.network.outputs.public_subnet_ids)
+  id       = each.value
+}
+
 module "nat" {
   source = "../../../modules/nat"
 

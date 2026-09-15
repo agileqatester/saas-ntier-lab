@@ -84,3 +84,35 @@ class Tenant:
             "    raise SystemExit(1)\n"
         )
         return self.exec_python(code, timeout=45)
+
+    def db_query_without_tenant_context(self, sql: str = "SELECT id, tenant_id FROM sample_requests") -> kubectl.CmdResult:
+        """Open a fresh DB session and run SQL *without* set_config('app.tenant_id').
+
+        Contract: FORCE RLS must yield zero rows (fail closed), not the whole table.
+        """
+        assert self.secret_name, "tenant secret_name required"
+        code = f"""
+import json, os, boto3, psycopg2
+sm = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+secret = json.loads(sm.get_secret_value(SecretId={self.secret_name!r})["SecretString"])
+conn = psycopg2.connect(
+    host=os.environ["DB_HOST"],
+    port=int(os.environ.get("DB_PORT", "5432")),
+    dbname=os.environ.get("DB_NAME") or secret.get("dbname", "postgres"),
+    user=secret["username"],
+    password=secret["password"],
+)
+conn.autocommit = True
+cur = conn.cursor()
+# Deliberately do NOT set app.tenant_id
+cur.execute("SELECT current_setting('app.tenant_id', true)")
+print("setting=" + repr(cur.fetchone()[0]))
+cur.execute({sql!r})
+rows = cur.fetchall()
+print("count=" + str(len(rows)))
+for r in rows:
+    print("row=" + repr(r))
+cur.close()
+conn.close()
+"""
+        return self.exec_python(code, timeout=60)

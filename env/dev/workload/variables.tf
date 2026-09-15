@@ -39,9 +39,20 @@ variable "kubernetes_version" {
 }
 
 variable "eks_node_instance_type" {
-  description = "Single Dev node. t4g.small: t4g.micro only allows 4 pods (CNI) so the app cannot schedule."
+  description = "Single Dev node. t4g.small max ~11 pods (tight with 5 tenants). Use t4g.medium for alb_controller mode (~17 pods)."
   type        = string
   default     = "t4g.small"
+}
+
+variable "ingress_mode" {
+  description = "Product edge: nodeport = OpenTofu ALB + per-tenant NodePort (legacy lab). alb_controller = shared ALB via AWS Load Balancer Controller Ingress (Phase A)."
+  type        = string
+  default     = "alb_controller"
+
+  validation {
+    condition     = contains(["nodeport", "alb_controller"], var.ingress_mode)
+    error_message = "ingress_mode must be nodeport or alb_controller."
+  }
 }
 
 variable "rds_instance_class" {
@@ -56,23 +67,44 @@ variable "enable_rds" {
   default     = false
 }
 
-variable "tenant_ids" {
-  description = "Pooled tenant keys. IAM, secrets, ALB /tenant-<id>*, NodePort 30080+index. First id runs the RLS migrate Job. Used only when enable_rds is true for IAM/secrets; ALB paths always follow this list."
-  type        = list(string)
-  default     = ["a", "b", "c"]
+variable "manage_tenant_identity" {
+  description = "If true, OpenTofu for_each creates per-tenant SM secrets + IRSA. If false (default), the control plane owns them; use platform_tenant_id for migrate Job."
+  type        = bool
+  default     = false
+}
+
+variable "platform_tenant_id" {
+  description = "Tenant id whose namespace runs the RLS migrate Job (usually a). Required when manage_tenant_identity is false."
+  type        = string
+  default     = "a"
 
   validation {
-    condition     = length(var.tenant_ids) > 0 && length(var.tenant_ids) == length(toset(var.tenant_ids))
-    error_message = "tenant_ids must be unique and non-empty."
+    condition     = can(regex("^[a-z][a-z0-9]{0,15}$", var.platform_tenant_id))
+    error_message = "platform_tenant_id must be a short lowercase label."
+  }
+}
+
+variable "tenant_ids" {
+  description = "When manage_tenant_identity=true: pooled keys OpenTofu creates SM/IRSA for. When false: ignored for identity (control plane owns); may be empty."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = length(var.tenant_ids) == length(toset(var.tenant_ids))
+    error_message = "tenant_ids must be unique."
   }
   validation {
     condition     = alltrue([for t in var.tenant_ids : can(regex("^[a-z][a-z0-9]{0,15}$", t))])
     error_message = "each tenant id must be a short lowercase label (e.g. a, b, c)."
   }
+  validation {
+    condition     = !var.manage_tenant_identity || length(var.tenant_ids) > 0
+    error_message = "tenant_ids must be non-empty when manage_tenant_identity is true."
+  }
 }
 
 variable "enable_alb" {
-  description = "Internet-facing HTTP ALB. Path rules /tenant-<id>* from var.tenant_ids (NodePorts 30080+index). Ingress is var.my_ip. Default action 404."
+  description = "Access-logs bucket + SNS. In nodeport mode also creates the OpenTofu ALB. In alb_controller mode the controller owns the ALB; this still creates the logs bucket."
   type        = bool
   default     = true
 }

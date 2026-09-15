@@ -5,9 +5,9 @@ Do **not** run OpenTofu in this directory. Use the stacks:
 | Directory | Habit | Cost while left on |
 |-----------|--------|--------------------|
 | [network/](network/) | `tofu apply` once; keep | ~$0 (VPC/subnets/IGW) + ~$1 if remote state/KMS |
-| [workload/](workload/) | `tofu apply` for a test; `tofu destroy` after | NAT, EKS, ALB, optional RDS |
+| [workload/](workload/) | `tofu apply` for a test; `tofu destroy` after | NAT, EKS, ALB/LBC, optional RDS |
 
-After RDS: add tenants with OpenTofu `tenant_ids` then `onboard_tenant.py` (see root [README — Add a tenant](../../README.md#add-a-tenant)). IAM is OpenTofu `for_each`; the script reads `tofu output -json`.
+**Tenants:** OpenTofu owns the platform (`manage_tenant_identity=false`). Day-2 create/suspend/resume/delete goes through [`control-plane/`](../../control-plane/) — see [docs/saas/TENANT_CONTROL_PLANE.md](../../docs/saas/TENANT_CONTROL_PLANE.md) and root [README — Add a tenant](../../README.md#add-a-tenant).
 
 ```bash
 cp network/terraform.tfvars.example network/terraform.tfvars

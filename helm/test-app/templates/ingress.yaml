@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "test-app.fullname" . }}
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+    tenant: {{ .Values.tenant.id | quote }}
+  annotations:
+    alb.ingress.kubernetes.io/scheme: {{ .Values.ingress.scheme | quote }}
+    alb.ingress.kubernetes.io/target-type: {{ .Values.ingress.targetType | quote }}
+    alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.groupName | quote }}
+    alb.ingress.kubernetes.io/group.order: {{ .Values.ingress.groupOrder | quote }}
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath | quote }}
+    alb.ingress.kubernetes.io/success-codes: "200"
+    {{- if .Values.ingress.inboundCidrs }}
+    alb.ingress.kubernetes.io/inbound-cidrs: {{ .Values.ingress.inboundCidrs | join "," | quote }}
+    {{- end }}
+    {{- if .Values.ingress.accessLogsBucket }}
+    alb.ingress.kubernetes.io/load-balancer-attributes: "access_logs.s3.enabled=true,access_logs.s3.bucket={{ .Values.ingress.accessLogsBucket }},access_logs.s3.prefix={{ .Values.ingress.accessLogsPrefix }}"
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.pathPrefix | default (printf "/tenant-%s" .Values.tenant.id) }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "test-app.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

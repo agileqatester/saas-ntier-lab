@@ -89,7 +89,10 @@ data "aws_iam_policy_document" "migrator_assume" {
     condition {
       test     = "StringEquals"
       variable = "${module.eks.oidc_provider_url}:sub"
-      values   = ["system:serviceaccount:tenant-${local.first_tenant}:test-app-migrate"]
+      values = [
+        "system:serviceaccount:tenant-${local.first_tenant}:test-app-migrate",
+        "system:serviceaccount:tenant-system:rds-admin",
+      ]
     }
     condition {
       test     = "StringEquals"
@@ -112,10 +115,11 @@ data "aws_iam_policy_document" "migrator_secrets" {
   statement {
     sid     = "ReadMasterAndTenantSecrets"
     actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = concat(
-      [module.rds[0].rds_credentials_secret_arn],
-      [for s in aws_secretsmanager_secret.tenant : s.arn]
-    )
+    # Wildcard: control plane may create tenant secrets outside OpenTofu for_each.
+    resources = [
+      module.rds[0].rds_credentials_secret_arn,
+      "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/rds/tenant-*",
+    ]
   }
 }
 

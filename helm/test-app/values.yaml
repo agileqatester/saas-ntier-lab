@@ -14,12 +14,25 @@ serviceAccount:
   name: test-app
 
 service:
-  type: NodePort
+  # Phase A default: ClusterIP behind shared ALB Ingress (group.name).
+  # Lab NodePort mode still supported via onboard --edge nodeport.
+  type: ClusterIP
   port: 8080
-  # Chart default only. Real ports are 30080 + index in var.tenant_ids (tofu → onboard_tenant.py).
+  nodePort: null
 
 ingress:
   enabled: false
+  className: alb
+  scheme: internet-facing
+  targetType: ip
+  groupName: ntier-dev
+  # Lower order = higher precedence within the shared ALB group.
+  groupOrder: "100"
+  healthcheckPath: /health
+  inboundCidrs: []
+  accessLogsBucket: ""
+  accessLogsPrefix: alb
+  annotations: {}
 
 resources:
   limits:
@@ -50,9 +63,9 @@ quota:
 
 networkPolicy:
   enabled: false
-  # Kubelet + NodePort SNAT (externalTrafficPolicy Cluster) use the node IP.
-  # Pod-to-pod uses the pod IP, so other tenants in the same subnet stay blocked.
-  # kubectl get nodes -o wide
+  # NodePort lab: node InternalIP/32 (kubelet + NodePort SNAT).
+  # ALB controller (target-type ip): public subnet CIDRs only (ALB ENIs),
+  # not the VPC CIDR — otherwise tenant pods could reach each other.
   ingressCidrs: []
 
 # Database configuration

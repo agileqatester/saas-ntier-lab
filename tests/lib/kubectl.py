@@ -79,3 +79,33 @@ def exec_in_app(namespace: str, command: list[str], *, timeout: float = 30) -> C
 def get_json(args: list[str]) -> dict:
     r = run([*args, "-o", "json"], check=True)
     return json.loads(r.stdout)
+
+
+def apply_manifest(manifest: str, *, namespace: str | None = None) -> CmdResult:
+    args = ["apply", "-f", "-"]
+    if namespace:
+        args = ["apply", "-n", namespace, "-f", "-"]
+    cmd = [_kubectl(), *args]
+    proc = subprocess.run(cmd, input=manifest, capture_output=True, text=True, timeout=60)
+    return CmdResult(proc.returncode, proc.stdout.strip(), proc.stderr.strip())
+
+
+def delete_resource(
+    kind: str,
+    name: str,
+    *,
+    namespace: str,
+    ignore_not_found: bool = True,
+) -> CmdResult:
+    args = ["delete", kind, name, "-n", namespace, "--wait=true", "--timeout=60s"]
+    if ignore_not_found:
+        args.append("--ignore-not-found")
+    return run(args, timeout=90)
+
+
+def pod_phase(namespace: str, name: str) -> str:
+    r = run(
+        ["get", "pod", name, "-n", namespace, "-o", "jsonpath={.status.phase}"],
+        timeout=30,
+    )
+    return r.stdout if r.success else ""

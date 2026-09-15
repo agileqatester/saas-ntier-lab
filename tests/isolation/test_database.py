@@ -85,3 +85,15 @@ def test_tenant_a_cannot_create_tenant_b_record(tenant_a: Tenant, tenant_b: Tena
 
     b_records = _records(tenant_b.get("/db/records", params={"limit": 100}).json())
     assert all(r.get("message") != marker for r in b_records)
+
+
+def test_missing_tenant_context_returns_no_data(tenant_a: Tenant) -> None:
+    """Defensive: unset app.tenant_id must not expose rows under FORCE RLS."""
+    # Ensure at least one of A's rows exists so a broken RLS would leak something.
+    marker = f"qa-rls-ctx-{uuid.uuid4().hex[:8]}"
+    created = tenant_a.post("/db/items", json={"message": marker})
+    assert created.status_code == 201, created.text
+
+    result = tenant_a.db_query_without_tenant_context()
+    assert result.success, result.stderr or result.stdout
+    assert "count=0" in result.stdout, result.stdout

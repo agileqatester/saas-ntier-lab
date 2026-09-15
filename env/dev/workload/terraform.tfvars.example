@@ -19,3 +19,13 @@ enable_rds = false
 # First id runs the RLS migrate Job. To add a tenant: append an id, apply, then onboard_tenant.py
 # (README — Add a tenant).
 tenant_ids = ["a", "b", "c"]
+
+# Phase A shared Ingress (ALB controller). Use "nodeport" for legacy OpenTofu ALB.
+ingress_mode = "alb_controller"
+# t4g.medium: ~17 pods; t4g.small max 11 is too tight with LBC + 5 tenants.
+# eks_node_instance_type = "t4g.medium"
+
+# false = control plane owns SM/IRSA; true = OpenTofu for_each on tenant_ids
+manage_tenant_identity = false
+platform_tenant_id     = "a"
+tenant_ids             = []

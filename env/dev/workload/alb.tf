@@ -42,6 +42,15 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
   }
 }
 
+resource "aws_s3_bucket_versioning" "alb_logs" {
+  count  = var.enable_alb ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
   count  = var.enable_alb ? 1 : 0
   bucket = aws_s3_bucket.alb_logs[0].id
@@ -60,7 +69,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
 }
 
 resource "aws_s3_bucket_policy" "alb_logs" {
-  count  = var.enable_alb ? 1 : 0
+  count = var.enable_alb ? 1 : 0
   bucket = aws_s3_bucket.alb_logs[0].id
 
   depends_on = [
@@ -89,8 +98,9 @@ resource "aws_s3_bucket_policy" "alb_logs" {
   })
 }
 
+# Legacy lab edge: OpenTofu ALB + per-tenant NodePort target groups.
 module "alb" {
-  count  = var.enable_alb ? 1 : 0
+  count  = local.use_legacy_alb ? 1 : 0
   source = "../../../modules/alb"
 
   name_prefix            = var.name_prefix
@@ -112,7 +122,7 @@ module "alb" {
 }
 
 resource "aws_security_group_rule" "alb_to_nodes" {
-  count = var.enable_alb ? 1 : 0
+  count = local.use_legacy_alb ? 1 : 0
 
   type                     = "ingress"
   from_port                = local.node_port_min
@@ -124,7 +134,7 @@ resource "aws_security_group_rule" "alb_to_nodes" {
 }
 
 resource "aws_autoscaling_attachment" "alb" {
-  for_each = var.enable_alb ? (
+  for_each = local.use_legacy_alb ? (
     length(module.alb[0].path_target_group_arns) > 0
     ? module.alb[0].path_target_group_arns
     : { default = module.alb[0].http_target_group_arn }
@@ -140,7 +150,7 @@ resource "aws_sns_topic" "alerts" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
-  count = var.enable_alb ? 1 : 0
+  count = local.use_legacy_alb ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-alb-5xx"
   comparison_operator = "GreaterThanThreshold"

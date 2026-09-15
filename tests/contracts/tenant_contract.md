@@ -21,28 +21,21 @@ A tenant id `T` is ACTIVE when:
 
 ## Not part of the contract (implementation details)
 
-| Today (lab) | Why it is *not* a contract |
-|-------------|----------------------------|
-| NodePort `30080 + index` | ALB instance-target hook only; does not scale to ~100 tenants |
-| `onboard_tenant.py` + `var.tenant_ids` OpenTofu apply | Manual/scripted bootstrap; control plane replaces this path |
+| Lab detail | Why it is *not* a contract |
+|------------|----------------------------|
+| NodePort `30080 + index` (legacy `ingress_mode=nodeport`) | Replaced by ClusterIP + shared Ingress in Phase A |
+| OpenTofu `for_each` on `tenant_ids` for SM/IRSA | Control plane owns identity (`manage_tenant_identity=false`) |
 | Exact ResourceQuota object name | Quota **effect** matters |
 | Exact NetworkPolicy YAML shape | **Cannot connect** matters |
 
-## Control plane scaling notes (future)
+## Control plane (current lab)
 
-NodePort-per-tenant + ALB listener rule-per-tenant + OpenTofu `for_each` IRSA **will not sustain ~100 tenants** on this pattern:
+Implemented under [`control-plane/`](../../control-plane/). Design:
+[`docs/saas/TENANT_CONTROL_PLANE.md`](../../docs/saas/TENANT_CONTROL_PLANE.md).
+Verification log: [`docs/saas/VERIFICATION.md`](../../docs/saas/VERIFICATION.md).
 
-- NodePort range / SG surface / listener rule limits
-- Slow state & applies; sequential Helm onboard
-- Pod density on a single small node
+Scaling notes that still apply for ~100 tenants: cells / pod density, not
+NodePort-per-tenant. Host-based routing is Phase B.
 
-Target direction when expanding the control plane:
-
-1. Keep **pooled** compute + shared Postgres + RLS (this lab’s model)
-2. Replace product ingress with **shared ALB/Ingress (IP targets or AWS LB Controller)** — path or host routing, **no dedicated NodePort per tenant**
-3. Onboard via API/reconciler (create namespace, Helm/Operator, IAM/secret binding) instead of editing `tenant_ids` + script
-4. Same QA suite must still pass (fixtures use `base_url` + `path_prefix`, not ports)
-
-## Lifecycle (tests later)
-
-`CREATE → PROVISIONING → ACTIVE → SUSPEND/RESUME → DELETE` is validated **after** the control plane exists, using this same contract for ACTIVE.
+Lifecycle (`CREATE → ACTIVE → SUSPEND/RESUME → DELETE`) is exercised via the
+control plane CLI/API; ACTIVE isolation stays this contract’s pytest suite.
