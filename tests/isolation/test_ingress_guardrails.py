@@ -22,8 +22,9 @@ def test_tenant_sa_cannot_create_ingress(tenant_a: Tenant) -> None:
             f"--as=system:serviceaccount:{tenant_a.namespace}:test-app",
         ]
     )
-    assert result.success, result.stderr
-    assert result.stdout.strip() == "no"
+    # kubectl auth can-i prints "no" and exits 1 when the verb is denied.
+    assert result.stdout.strip() == "no", result.stderr or result.stdout
+    assert result.failed
 
 
 def test_wrong_alb_group_name_is_denied(tenant_a: Tenant) -> None:

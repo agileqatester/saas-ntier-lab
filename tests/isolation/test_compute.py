@@ -80,6 +80,8 @@ def test_tenant_b_remains_healthy_when_tenant_a_hits_quota(
         response = tenant_b.get("/health")
         assert response.status_code == 200, response.text
         assert response.json().get("status") == "healthy"
-        assert response.json().get("database") == "connected"
+        # /health is slim ({"status":"healthy"}); 503 if Postgres is down.
+        db = tenant_b.get("/db/version")
+        assert db.status_code == 200, db.text
     finally:
         kubectl.delete_resource("pod", name, namespace=tenant_a.namespace)
