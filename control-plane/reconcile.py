@@ -32,8 +32,11 @@ class Plan:
 def plan_action(desired: str, observed: Observed, status: str) -> Plan:
     """Pure decision: what to run given desired vs actual. No side effects.
 
-    Option A: lifecycle verbs stay narrow — resume only from SUSPENDED;
-    FAILED/DRIFT/partial with a namespace → repair (reprovision), not resume.
+    When desired ACTIVE:
+      fully active          → none
+      namespace missing      → provision
+      status == SUSPENDED   → resume
+      FAILED / DRIFT / else → repair
     """
     if desired == "GONE":
         if observed.matches_gone():
@@ -155,11 +158,21 @@ def reconcile_one(
         raise
 
     item = store.get(tenant_id) or {"id": tenant_id, "status": "GONE"}
-    # After provision/resume/repair, re-check contract before trusting ACTIVE.
-    if desired == "ACTIVE" and item.get("status") == "ACTIVE":
+    # After mutating actions toward ACTIVE: re-observe + contract gate.
+    # Do not trust the provisioner/lifecycle status alone (incomplete edge → DRIFT).
+    if desired == "ACTIVE" and decision.action in ("provision", "repair", "resume"):
+        item = store.get(tenant_id) or item
         observed = observer.observe(tenant_id, item)
         check = (contract_fn or validate_active_contract)(tenant_id, observed, item)
-        if not check.ok:
+        if check.ok:
+            item = _record_observed(
+                store,
+                tenant_id,
+                observed,
+                status="ACTIVE",
+                error=None,
+            )
+        else:
             item = _record_observed(
                 store,
                 tenant_id,

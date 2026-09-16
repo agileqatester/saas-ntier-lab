@@ -81,7 +81,7 @@
         <mxCell id="n123" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#232F3E;fontSize=11;align=center;verticalAlign=middle;fontStyle=1;" value="tenant-a&lt;br&gt;ns + NetPol + quota&lt;br&gt;Service: ClusterIP&lt;br&gt;IRSA a — SA per tenant" vertex="1">
           <mxGeometry height="55" width="130" x="330" y="481" as="geometry" />
         </mxCell>
-        <mxCell id="n124" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#232F3E;fontSize=11;align=center;verticalAlign=middle;fontStyle=1;" value="tenant-b&lt;br&gt;ns + NetPol + quota&lt;br&gt;Service: ClusterIP&lt;br&gt;IRSA a — SA per tenant" vertex="1">
+        <mxCell id="n124" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#232F3E;fontSize=11;align=center;verticalAlign=middle;fontStyle=1;" value="tenant-b&lt;br&gt;ns + NetPol + quota&lt;br&gt;Service: ClusterIP&lt;br&gt;IRSA b — SA per tenant" vertex="1">
           <mxGeometry height="55" width="130" x="330" y="581" as="geometry" />
         </mxCell>
         <mxCell id="n126" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#2E73B8;strokeWidth=2;verticalAlign=top;align=center;fontSize=13;fontStyle=1;fontColor=#2E73B8;spacingLeft=8;spacingTop=6;dashed=0;" value="Private subnet 10.0.12.0/24&amp;nbsp;&lt;div&gt;no IGW, no public IP&lt;/div&gt;" vertex="1">
