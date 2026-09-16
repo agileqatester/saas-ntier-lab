@@ -2,6 +2,11 @@
 
 Commands set desired_status. The reconciler makes actual match desired.
 discover_active() used to mark any tenant-* namespace ACTIVE; this does not.
+
+ACTIVE in the registry means:
+  observed infrastructure ready (observe.matches_active)
+  AND validate_active_contract(...) ok
+Full isolation (RLS, cross-tenant, egress deny, …) stays in tests/.
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from contract_check import validate_active_contract
 from errors import ControlPlaneError, ValidationError
 from ids import validate_tenant_id
 from observe import KubectlObserver, Observed, Observer
@@ -24,7 +30,11 @@ class Plan:
 
 
 def plan_action(desired: str, observed: Observed, status: str) -> Plan:
-    """Pure decision: what to run given desired vs actual. No side effects."""
+    """Pure decision: what to run given desired vs actual. No side effects.
+
+    Option A: lifecycle verbs stay narrow — resume only from SUSPENDED;
+    FAILED/DRIFT/partial with a namespace → repair (reprovision), not resume.
+    """
     if desired == "GONE":
         if observed.matches_gone():
             return Plan("purge_registry", "desired GONE and namespace absent")
@@ -35,18 +45,20 @@ def plan_action(desired: str, observed: Observed, status: str) -> Plan:
         return Plan("suspend", "desired SUSPENDED but workload or Ingress still up")
     if desired == "ACTIVE":
         if observed.matches_active():
-            return Plan("none", "already active")
-        if observed.namespace:
-            return Plan("resume", "namespace present but not fully ACTIVE")
-        return Plan("provision", "desired ACTIVE but namespace missing")
+            return Plan("none", "infrastructure looks active; contract check next")
+        if not observed.namespace:
+            return Plan("provision", "desired ACTIVE but namespace missing")
+        if status == "SUSPENDED":
+            return Plan("resume", "SUSPENDED namespace present; resume workload")
+        return Plan(
+            "repair",
+            f"namespace present but not fully ACTIVE (status={status or 'unknown'}); reprovision",
+        )
     return Plan("none", f"unknown desired {desired}")
 
 
 def _record_observed(store: TenantStore, tenant_id: str, observed: Observed, **fields: Any) -> dict:
     payload = {"observed_json": observed.as_json(), **fields}
-    if observed.matches_active() and fields.get("status") is None:
-        payload.setdefault("status", "ACTIVE")
-        payload.setdefault("error", None)
     return store.upsert(tenant_id, **payload)
 
 
@@ -60,6 +72,7 @@ def reconcile_one(
     suspend_fn: Callable | None = None,
     resume_fn: Callable | None = None,
     delete_fn: Callable | None = None,
+    contract_fn: Callable | None = None,
 ) -> dict[str, Any]:
     tenant_id = validate_tenant_id(tenant_id)
     item = store.get(tenant_id)
@@ -72,18 +85,35 @@ def reconcile_one(
     store.upsert(tenant_id, observed_json=observed.as_json())
 
     if decision.action == "none":
-        status = "ACTIVE" if desired == "ACTIVE" else "SUSPENDED"
         if desired == "GONE":
             store.delete(tenant_id)
             return {"id": tenant_id, "status": "GONE", "reconcile": decision.reason}
-        return _record_observed(store, tenant_id, observed, status=status, error=None)
+        if desired == "SUSPENDED":
+            return _record_observed(store, tenant_id, observed, status="SUSPENDED", error=None)
+        # desired ACTIVE: infra looks ready — require contract gate before ACTIVE.
+        check = (contract_fn or validate_active_contract)(tenant_id, observed, item)
+        if not check.ok:
+            return _record_observed(
+                store,
+                tenant_id,
+                observed,
+                status="DRIFT",
+                error=check.reason,
+            )
+        return _record_observed(
+            store,
+            tenant_id,
+            observed,
+            status="ACTIVE",
+            error=None,
+        )
 
     if decision.action == "purge_registry":
         store.delete(tenant_id)
         return {"id": tenant_id, "status": "GONE", "reconcile": decision.reason}
 
     try:
-        if decision.action == "provision":
+        if decision.action in ("provision", "repair"):
             fn = provision_fn
             if fn is None:
                 from provisioner import provision
@@ -125,6 +155,18 @@ def reconcile_one(
         raise
 
     item = store.get(tenant_id) or {"id": tenant_id, "status": "GONE"}
+    # After provision/resume/repair, re-check contract before trusting ACTIVE.
+    if desired == "ACTIVE" and item.get("status") == "ACTIVE":
+        observed = observer.observe(tenant_id, item)
+        check = (contract_fn or validate_active_contract)(tenant_id, observed, item)
+        if not check.ok:
+            item = _record_observed(
+                store,
+                tenant_id,
+                observed,
+                status="DRIFT",
+                error=check.reason,
+            )
     item["reconcile"] = decision.reason
     return item
 

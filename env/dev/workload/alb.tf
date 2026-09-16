@@ -69,7 +69,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
 }
 
 resource "aws_s3_bucket_policy" "alb_logs" {
-  count = var.enable_alb ? 1 : 0
+  count  = var.enable_alb ? 1 : 0
   bucket = aws_s3_bucket.alb_logs[0].id
 
   depends_on = [

@@ -41,6 +41,15 @@ def test_rejects_bad_id(tmp_path: Path) -> None:
         store.upsert("NOPE", status="ACTIVE")
 
 
+def test_rejects_bad_desired_status(tmp_path: Path) -> None:
+    store = TenantStore(tmp_path / "tenants.db")
+    store.upsert("a", status="ACTIVE", desired_status="ACTIVE")
+    with pytest.raises(ValidationError):
+        store.upsert("a", desired_status="TOTALLY_WRONG")
+    with pytest.raises(ValidationError):
+        store.upsert("b", status="ACTIVE", desired_status="BOGUS")
+
+
 def test_imports_legacy_json(tmp_path: Path) -> None:
     legacy = tmp_path / "tenants.json"
     legacy.write_text(

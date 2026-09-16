@@ -28,9 +28,39 @@ Private subnets egress via the NAT instance; S3 uses a **gateway** endpoint (no 
 
 **RDS vs S3/SNS:** RDS is an AWS-managed engine, but the instance still has **ENIs in your private subnets** and a security group (pods reach it on 5432 inside the VPC). S3, SNS, and CloudWatch are regional APIs — they sit outside the VPC. The diagram puts RDS with the other managed icons; the dashed line back into **1a/1b private subnets** is the network attachment. Off by default (`enable_rds`).
 
-**Pooled tenants (same platform):** namespaces on one shared EKS cluster, one shared Postgres — no stack-per-tenant, no database-per-tenant. Isolation is enforced at independent layers — **authorization, network, identity, data, and compute**; see [Pooled tenants](#pooled-tenants). The public ALB is path-based (`/tenant-<id>`) on the default ELB DNS name — no purchased domain. **Tenant Control Plane** (`control-plane/`) owns Secrets Manager + IRSA + Helm/Ingress lifecycle; OpenTofu owns VPC/EKS/RDS and the LBC install. See [docs/saas/TENANT_CONTROL_PLANE.md](docs/saas/TENANT_CONTROL_PLANE.md) and [docs/saas/VERIFICATION.md](docs/saas/VERIFICATION.md).
+**Pooled tenants (same platform):** namespaces on one shared EKS cluster, one shared Postgres — no stack-per-tenant, no database-per-tenant. Isolation is enforced at independent layers — **authorization, network, identity, data, and compute**; see [Pooled tenants](#pooled-tenants). The public ALB is path-based (`/tenant-<id>`) on the default ELB DNS name — no purchased domain. See [docs/saas/TENANT_CONTROL_PLANE.md](docs/saas/TENANT_CONTROL_PLANE.md) and [docs/saas/VERIFICATION.md](docs/saas/VERIFICATION.md).
 
-Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architecture.jpg](architecture.jpg) (GitHub README image). Draw.io source: [architecture.drawio](architecture.drawio).
+**Who owns what:**
+
+```text
+OpenTofu
+ ├── VPC
+ ├── EKS
+ ├── RDS
+ ├── NAT
+ ├── LBC infrastructure
+ └── platform infrastructure
+
+Tenant Control Plane
+ ├── tenant identity
+ ├── Secrets Manager
+ ├── IRSA
+ ├── tenant namespace
+ ├── Helm
+ ├── lifecycle
+ └── reconciliation
+
+Kubernetes
+ ├── NetworkPolicy
+ ├── ResourceQuota
+ ├── RBAC
+ └── admission guardrails
+
+PostgreSQL
+ └── final data isolation via RLS
+```
+
+Keep the VPC. Destroy NAT, EKS, ALB, and RDS after a test. Diagram: [architecture.jpg](architecture.jpg) (GitHub README image). **Authoritative editable source:** [architecture.drawio](architecture.drawio) (regenerate jpg/png/svg from draw.io). There is no Mermaid `architecture.mmd` — older NodePort sketches were removed so the repo cannot drift back to NP 30080/30081.
 
 ## What’s next
 
@@ -252,7 +282,7 @@ export TENANT_BASE_URL="$(cat env/dev/workload/.alb_url)"   # live stack only
 .venv-tests/bin/pytest tests/smoke tests/isolation -v      # needs live stack + X-Lab-User map
 ```
 
-**Collected suite size:** **97** tests (`pytest --collect-only`): **52** unit + **9** control-plane contract + **8** smoke + **28** isolation (includes authz, NetPol egress, Ingress guardrails). Parametrized cases are counted separately, so this is higher than the number of `def test_*` functions.
+**Collected suite size:** **108** tests (`pytest --collect-only`): **63** unit + **9** control-plane contract + **8** smoke + **28** isolation (includes authz, NetPol egress, Ingress guardrails). Parametrized cases are counted separately, so this is higher than the number of `def test_*` functions.
 
 ```text
 SaaS Tenant Isolation Tests

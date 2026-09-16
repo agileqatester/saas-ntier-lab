@@ -15,7 +15,23 @@ def test_valid_ids(value: str) -> None:
     assert validate_tenant_id(value) == value
 
 
-@pytest.mark.parametrize("value", ["", "A", "1a", "has_underscore", "a" * 17, "tenant-a"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "A",
+        "1a",
+        "has_underscore",
+        "a" * 17,
+        "tenant-a",
+        # YAML / Job-manifest injection shapes (must never reach pg_admin)
+        'x"\nvalue: evil',
+        "x\nkind: Pod",
+        'tenant"break',
+        "tenant\n",
+        "tenant role",
+    ],
+)
 def test_invalid_ids(value: str) -> None:
     with pytest.raises(ValidationError):
         validate_tenant_id(value)

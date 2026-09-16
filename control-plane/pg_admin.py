@@ -10,6 +10,7 @@ import textwrap
 import time
 from pathlib import Path
 
+from ids import validate_tenant_id
 from onboard_bridge import OnboardError, run
 
 _DROP_SCRIPT = textwrap.dedent(
@@ -67,26 +68,33 @@ def _kubectl_json(args: list[str]) -> dict:
 
 def ensure_migrator_sa(outputs: dict, platform: str) -> str:
     """Ensure tenant-<platform>/test-app-migrate SA exists with migrator IRSA."""
+    platform = validate_tenant_id(platform)
     ns = f"tenant-{platform}"
     migrator = outputs.get("migrator_irsa_role_arn")
     if not migrator:
         raise OnboardError("tofu output migrator_irsa_role_arn is empty")
-    sa = textwrap.dedent(
-        f"""\
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-          name: test-app-migrate
-          namespace: {ns}
-          annotations:
-            eks.amazonaws.com/role-arn: "{migrator}"
-        """
+    # JSON apply avoids YAML field breakout if an ARN ever contained quotes/newlines.
+    sa = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {
+            "name": "test-app-migrate",
+            "namespace": ns,
+            "annotations": {"eks.amazonaws.com/role-arn": str(migrator)},
+        },
+    }
+    subprocess.run(
+        ["kubectl", "apply", "-f", "-"],
+        input=json.dumps(sa),
+        text=True,
+        check=True,
     )
-    subprocess.run(["kubectl", "apply", "-f", "-"], input=sa, text=True, check=True)
     return ns
 
 
 def drop_postgres_role(outputs: dict, tenant_id: str, timeout: int = 300) -> None:
+    # Defense in depth: callers validate, but this path feeds a Job under migrator IRSA.
+    tenant_id = validate_tenant_id(tenant_id)
     platform = outputs.get("platform_tenant_id") or "a"
     ns = ensure_migrator_sa(outputs, platform)
     region = outputs.get("aws_region") or "us-east-1"
@@ -116,46 +124,47 @@ def drop_postgres_role(outputs: dict, tenant_id: str, timeout: int = 300) -> Non
             ]
         )
 
-    manifest = textwrap.dedent(
-        f"""\
-        apiVersion: batch/v1
-        kind: Job
-        metadata:
-          name: {job}
-          namespace: {ns}
-        spec:
-          backoffLimit: 1
-          ttlSecondsAfterFinished: 300
-          template:
-            spec:
-              restartPolicy: Never
-              serviceAccountName: test-app-migrate
-              containers:
-                - name: drop
-                  image: python:3.11-slim
-                  command: ["/bin/sh", "-c"]
-                  args:
-                    - pip install -q boto3 psycopg2-binary && python /scripts/drop_role.py
-                  env:
-                    - name: AWS_REGION
-                      value: "{region}"
-                    - name: MASTER_SECRET
-                      value: "{master}"
-                    - name: DROP_ROLE
-                      value: "{role}"
-                    - name: DROP_POLICY
-                      value: "{policy}"
-                  volumeMounts:
-                    - name: scripts
-                      mountPath: /scripts
-              volumes:
-                - name: scripts
-                  configMap:
-                    name: {cm}
-        """
-    )
+    # Structured JSON — never f-string into YAML (quote/newline breakout).
+    manifest = {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {"name": job, "namespace": ns},
+        "spec": {
+            "backoffLimit": 1,
+            "ttlSecondsAfterFinished": 300,
+            "template": {
+                "spec": {
+                    "restartPolicy": "Never",
+                    "serviceAccountName": "test-app-migrate",
+                    "containers": [
+                        {
+                            "name": "drop",
+                            "image": "python:3.11-slim",
+                            "command": ["/bin/sh", "-c"],
+                            "args": [
+                                "pip install -q boto3 psycopg2-binary && python /scripts/drop_role.py"
+                            ],
+                            "env": [
+                                {"name": "AWS_REGION", "value": str(region)},
+                                {"name": "MASTER_SECRET", "value": str(master)},
+                                {"name": "DROP_ROLE", "value": role},
+                                {"name": "DROP_POLICY", "value": policy},
+                            ],
+                            "volumeMounts": [{"name": "scripts", "mountPath": "/scripts"}],
+                        }
+                    ],
+                    "volumes": [{"name": "scripts", "configMap": {"name": cm}}],
+                }
+            },
+        },
+    }
     print(f"+ kubectl apply Job {ns}/{job}", file=sys.stderr)
-    subprocess.run(["kubectl", "apply", "-f", "-"], input=manifest, text=True, check=True)
+    subprocess.run(
+        ["kubectl", "apply", "-f", "-"],
+        input=json.dumps(manifest),
+        text=True,
+        check=True,
+    )
 
     deadline = time.time() + timeout
     try:

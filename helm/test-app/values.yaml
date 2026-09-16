@@ -46,6 +46,11 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Lab diagnostic HTTP surface (/, /db/version, verbose DB errors).
+# /health is always slim ({"status":"healthy"}) for ALB/kube probes.
+# Set false to hide demo disclosure; isolation tests expect true.
+labDiagnostics: true
+
 # Lab-only tenant authorization simulation. Not authentication.
 # X-Lab-User is checked here; Postgres tenant_id still comes from tenant.id.
 # Production should integrate an external OIDC/OAuth2 identity provider.

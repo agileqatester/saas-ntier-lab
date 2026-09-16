@@ -22,6 +22,8 @@ A tenant id `T` is ACTIVE when:
 - Egress default-deny except DNS, Postgres, same-namespace, and lab HTTPS
 - ResourceQuota bounds that tenant’s compute (noisy-neighbor)
 
+**Control-plane registry `ACTIVE` vs this contract:** the reconciler marks registry ACTIVE only after observed infrastructure is present (ns, Ready deploy, Ingress, Service, NetworkPolicy, ResourceQuota, IRSA-annotated SA) **and** `validate_active_contract()` passes (registry identity pointers for CP-owned tenants). That is a cheap fail-closed gate — not a substitute for this suite. Functional isolation (RLS, cross-tenant, egress deny, …) is proven by `tests/`, not by `observe.py`.
+
 ## Not part of the contract (implementation details)
 
 | Lab detail | Why it is *not* a contract |

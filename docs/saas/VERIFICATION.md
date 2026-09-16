@@ -4,33 +4,46 @@ What we ran against the live Dev stack while building the Tenant Control Plane (
 
 ---
 
-## A. Isolation QA (pytest)
+## Current verification (2026-09-16)
+
+| Suite | How | Result |
+|-------|-----|--------|
+| **Unit + CP contract** (no cluster) | `pytest -m unit` / GHA `python-unit.yml` | **72 passed** (2026-09-16) |
+| **Collected total** | `pytest --collect-only` | **108** tests |
+| **Live isolation + smoke** | needs EKS + `TENANT_BASE_URL` | Re-run against lab; historical live headline below |
+
+```bash
+.venv-tests/bin/pytest tests/ -v -m unit          # CI on every CP/helm/tests change
+export TENANT_BASE_URL="$(cat env/dev/workload/.alb_url)"
+.venv-tests/bin/pytest tests/ -v                  # full suite when cluster is up
+```
+
+---
+
+## A. Isolation QA (pytest) — history
 
 **Contract:** [`tests/contracts/tenant_contract.md`](../../tests/contracts/tenant_contract.md)  
 **Control Plane contract (unit, no cluster):** [`tests/contracts/control_plane_contract.md`](../../tests/contracts/control_plane_contract.md)  
 **How:** [`tests/README.md`](../../tests/README.md)
 
-```bash
-export TENANT_BASE_URL="$(cat env/dev/workload/.alb_url)"   # or tofu output -raw alb_url
-# kubectl already pointed at the cluster
-.venv-tests/bin/pytest tests/ -v
-```
-
 | When | Edge | Result |
 |------|------|--------|
 | After fresh apply + scripted onboard | Legacy NodePort ALB | **23 passed** |
-| After Phase A (`alb_controller` + ClusterIP Ingress) | Shared LBC ALB | **23 passed** |
+| After Phase A (`alb_controller` + ClusterIP Ingress) | Shared LBC ALB | **23 passed** (pre authz/guardrails/CP unit expansion) |
 
-Coverage (summary):
+Coverage (summary) — current suite adds authorization, Ingress guardrails, egress NetPol, SQLite/reconcile/CP contract units on top of:
 
-- **Smoke:** namespace, Ready deploy, `/health`, DB reachable (`a`/`b`)
+- **Smoke:** namespace, Ready deploy, slim `/health`, DB reachable (`a`/`b`)
 - **Authorization:** `X-Lab-User` allow/deny; header is not a Postgres tenant switch (`/health` stays open)
 - **Database:** own rows OK; spoof `tenant_id` in query/body blocked; missing RLS context → no rows
 - **IAM:** each tenant reads only its secret
 - **Network:** east-west blocked between tenant Services
+- **Edge:** VAP denies foreign `group.name` / path; tenant SA cannot create Ingress
 - **Compute:** ResourceQuota blocks extra pods; peer tenant stays healthy
 
 Fixtures stay on permanent tenants `a`/`b` in `tests/config/tenants.yaml` (path-based URLs — not NodePorts).
+
+Lab app diagnostics (`/`, `/db/version`, verbose errors) are gated by `LAB_DIAGNOSTICS` (default `true`). `/health` always returns `{"status":"healthy"}` only.
 
 ---
 

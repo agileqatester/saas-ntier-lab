@@ -151,22 +151,22 @@ output "app_log_group" {
 output "helm_install" {
   description = "Onboard var.tenant_ids after nodes are Ready. Uses helm/test-app/onboard_tenant.py"
   value = templatefile("${path.module}/helm_install.tftpl", {
-    enable_rds         = var.enable_rds
-    use_controller     = local.use_controller
-    chart              = "${path.module}/../../../helm/test-app"
-    onboard            = "${path.module}/../../../helm/test-app/onboard_tenant.py"
-    fluent_chart       = "${path.module}/../../../helm/fluent-bit"
-    fluent_bit_role    = aws_iam_role.fluent_bit.arn
-    log_group          = aws_cloudwatch_log_group.app.name
-    tenant_ids         = length(var.tenant_ids) > 0 ? var.tenant_ids : [var.platform_tenant_id]
-    first_tenant       = local.first_tenant
-    first_node_port    = try(local.tenant_node_ports[local.first_tenant], 30080)
-    region             = var.aws_region
-    cluster_name       = module.eks.eks_cluster_name
-    vpc_id             = data.terraform_remote_state.network.outputs.vpc_id
-    lbc_role_arn       = try(aws_iam_role.lbc[0].arn, "")
-    alb_ingress_group  = var.name_prefix
-    alb_url            = local.use_legacy_alb ? module.alb[0].alb_url : (
+    enable_rds        = var.enable_rds
+    use_controller    = local.use_controller
+    chart             = "${path.module}/../../../helm/test-app"
+    onboard           = "${path.module}/../../../helm/test-app/onboard_tenant.py"
+    fluent_chart      = "${path.module}/../../../helm/fluent-bit"
+    fluent_bit_role   = aws_iam_role.fluent_bit.arn
+    log_group         = aws_cloudwatch_log_group.app.name
+    tenant_ids        = length(var.tenant_ids) > 0 ? var.tenant_ids : [var.platform_tenant_id]
+    first_tenant      = local.first_tenant
+    first_node_port   = try(local.tenant_node_ports[local.first_tenant], 30080)
+    region            = var.aws_region
+    cluster_name      = module.eks.eks_cluster_name
+    vpc_id            = data.terraform_remote_state.network.outputs.vpc_id
+    lbc_role_arn      = try(aws_iam_role.lbc[0].arn, "")
+    alb_ingress_group = var.name_prefix
+    alb_url = local.use_legacy_alb ? module.alb[0].alb_url : (
       fileexists(local.alb_url_file) ? trimspace(file(local.alb_url_file)) : "http://127.0.0.1:8080"
     )
   })

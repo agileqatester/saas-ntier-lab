@@ -40,11 +40,17 @@ data:
     DB_ENABLED = os.getenv("DB_ENABLED", "false").lower() == "true"
     TENANT_ID = os.getenv("TENANT_ID", "").strip()
     LAB_USERS = load_lab_users(os.getenv("LAB_USER_MAP", ""))
+    # Lab demo endpoints (/, /db/version, verbose errors). Probes always use slim /health.
+    LAB_DIAGNOSTICS = os.getenv("LAB_DIAGNOSTICS", "true").lower() in ("1", "true", "yes")
 
     def log_event(**fields):
         payload = {"tenant_id": TENANT_ID or None}
         payload.update(fields)
         print(json.dumps(payload), flush=True)
+
+    def api_error(message, status=500):
+        detail = message if LAB_DIAGNOSTICS else "request failed"
+        return jsonify({"status": "error", "message": detail}), status
 
     def tenant_missing():
         if DB_ENABLED and not TENANT_ID:
@@ -154,6 +160,9 @@ data:
 
     @app.route("/")
     def home():
+        if not LAB_DIAGNOSTICS:
+            return jsonify({"error": "not found"}), 404
+        # Diagnostic only — useful for lab demos; not a production surface.
         return jsonify({
             "message": "Test App Running",
             "hostname": socket.gethostname(),
@@ -164,12 +173,7 @@ data:
 
     @app.route("/health")
     def health():
-        health_status = {
-            "status": "healthy",
-            "hostname": socket.gethostname(),
-            "db_enabled": DB_ENABLED,
-            "tenant_id": TENANT_ID or None,
-        }
+        # External probe body stays minimal; details go to pod logs only.
         if DB_ENABLED:
             try:
                 with db_conn() as conn:
@@ -177,16 +181,20 @@ data:
                         cursor = conn.cursor()
                         cursor.execute("SELECT 1")
                         cursor.close()
-                        health_status["database"] = "connected"
+                        log_event(msg="health", database="connected")
                     else:
-                        health_status["database"] = "disconnected"
+                        log_event(msg="health", database="disconnected")
+                        return jsonify({"status": "unhealthy"}), 503
             except Exception as e:
-                health_status["database"] = "disconnected"
-                health_status["db_error"] = str(e)
-        return jsonify(health_status)
+                log_event(msg="health", database="disconnected", error=str(e))
+                return jsonify({"status": "unhealthy"}), 503
+        return jsonify({"status": "healthy"})
 
     @app.route("/db/version")
     def db_version():
+        # Lab diagnostic: Postgres version + session tenant setting.
+        if not LAB_DIAGNOSTICS:
+            return jsonify({"error": "not found"}), 404
         if not DB_ENABLED:
             return jsonify({"error": "Database not enabled"}), 400
         err = tenant_missing()
@@ -195,7 +203,7 @@ data:
         try:
             with db_conn() as conn:
                 if not conn:
-                    return jsonify({"status": "error", "message": "no db connection"}), 503
+                    return api_error("no db connection", 503)
                 cursor = conn.cursor()
                 cursor.execute("SELECT version()")
                 version = cursor.fetchone()
@@ -204,7 +212,7 @@ data:
                 cursor.close()
                 return jsonify({"status": "success", "db_version": version[0], "app.tenant_id": setting[0]})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return api_error(str(e), 500)
 
     @app.route("/db/init")
     def init_db():
@@ -232,7 +240,7 @@ data:
                     "tenant_id": TENANT_ID,
                 })
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return api_error(str(e), 500)
 
     @app.route("/db/items", methods=["POST"])
     def create_item():
@@ -274,7 +282,7 @@ data:
                     "tenant_id": result[3],
                 }), 201
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return api_error(str(e), 500)
 
     @app.route("/db/records")
     def get_records():
@@ -319,7 +327,7 @@ data:
                     "records": records,
                 })
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return api_error(str(e), 500)
 
     if __name__ == "__main__":
         if DB_ENABLED:

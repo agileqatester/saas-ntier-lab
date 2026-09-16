@@ -175,7 +175,10 @@ class TenantStore:
                 current["updated_at"] = now
                 current["version"] = int(current["version"]) + 1
                 if current.get("desired_status") not in DESIRED_STATUSES:
-                    current["desired_status"] = "ACTIVE"
+                    raise ValidationError(
+                        f"invalid desired_status {current.get('desired_status')!r}; "
+                        f"must be one of {DESIRED_STATUSES}"
+                    )
                 conn.execute(
                     """
                     UPDATE tenants SET
@@ -205,13 +208,18 @@ class TenantStore:
 
             status = fields.get("status") or "PROVISIONING"
             desired = fields.get("desired_status")
-            if desired not in DESIRED_STATUSES:
+            if desired is None:
+                # Infer only when omitted — never silently rewrite a bad value.
                 if status == "SUSPENDED":
                     desired = "SUSPENDED"
                 elif status in ("DELETING", "DELETE_FAILED"):
                     desired = "GONE"
                 else:
                     desired = "ACTIVE"
+            elif desired not in DESIRED_STATUSES:
+                raise ValidationError(
+                    f"invalid desired_status {desired!r}; must be one of {DESIRED_STATUSES}"
+                )
             created = fields.get("created_at") or now
             item = {
                 "id": tenant_id,

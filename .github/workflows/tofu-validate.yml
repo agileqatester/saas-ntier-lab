@@ -14,6 +14,9 @@ on:
       - "bootstrap/**"
       - ".github/workflows/tofu-validate.yml"
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -25,8 +28,8 @@ jobs:
           - env/dev/workload
           - bootstrap
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@v5
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: 1.12.5
       - name: fmt

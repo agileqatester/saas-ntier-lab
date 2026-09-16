@@ -68,6 +68,8 @@ spec:
               value: {{ .Values.pathPrefix | quote }}
             - name: LAB_USER_MAP
               value: {{ .Values.labAuth.users | toJson | quote }}
+            - name: LAB_DIAGNOSTICS
+              value: {{ .Values.labDiagnostics | default true | quote }}
           livenessProbe:
             httpGet:
               path: /health

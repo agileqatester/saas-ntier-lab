@@ -5,8 +5,12 @@ locals {
     ManagedBy   = "OpenTofu"
   }
 
+  # Why: keep VPC endpoint ENIs off app/data subnets when possible (cleaner routing/SGs).
+  # If endpoint_subnet_cidrs is set → dedicated endpoint subnets; else reuse private subnets.
   interface_endpoint_subnet_ids = length(var.endpoint_subnet_cidrs) > 0 ? aws_subnet.endpoint[*].id : aws_subnet.private[*].id
 
+  # Why: allow bring-your-own SG (shared/centralized) without forcing this module to own it.
+  # If endpoint_security_group_id is set → use it; else module SG; try/"" when that SG has count=0.
   interface_endpoint_sg_id = var.endpoint_security_group_id != "" ? var.endpoint_security_group_id : try(aws_security_group.vpc_endpoints[0].id, "")
 }
 
@@ -25,6 +29,15 @@ resource "aws_vpc" "this" {
       error_message = "azs, public_subnet_cidrs, and private_subnet_cidrs must be the same length."
     }
   }
+}
+
+# CIS / CKV2_AWS_12: strip default SG rules so accidental attachments get no access.
+resource "aws_default_security_group" "this" {
+  vpc_id = aws_vpc.this.id
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-default-sg-locked"
+  })
 }
 
 resource "aws_internet_gateway" "this" {

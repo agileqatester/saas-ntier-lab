@@ -28,6 +28,17 @@ Non-goals (later): multi-region, silo VPCs, AI plane, HTTPS/PrivateLink, real au
 | Lifecycle | suspend (scale 0 + drop Ingress), resume (re-onboard path), delete (disable access → revoke DB role → k8s → IRSA → secret; `DELETE_FAILED` if DB revoke fails) |
 | Bootstrap | `a`–`e` adopted to `owned_by: control_plane` (one-time `adopt` + tofu `state rm`) |
 
+### Identity ownership — intended long-term mode
+
+Two create paths exist on purpose; the registry records which one owns each tenant:
+
+| Mode | Flag | Creates IRSA + SM secret via | `owned_by` | Cleanup |
+|------|------|------------------------------|------------|---------|
+| **Control plane (default)** | `ensure_identity=true` | boto3 in `aws_identity.py` | `control_plane` | `delete_tenant()` deletes IAM + secret directly |
+| Legacy OpenTofu | `ensure_infra=true` | edit tfvars + `tofu apply` | `opentofu` | delete must go through Terraform / adopt first |
+
+**Long-term intended mode is `ensure_identity` / `owned_by: control_plane`.** OpenTofu keeps owning shared platform (VPC, EKS, RDS, LBC, migrator IRSA). Per-tenant identity is not meant to live in Terraform state — that split is deliberate so onboarding does not require a plan/apply per tenant. Do not leave a tenant half in each world: after `adopt` + `tofu state rm`, the registry tag is the source of truth for which cleanup path runs.
+
 ---
 
 ## Architecture
@@ -66,8 +77,9 @@ Non-goals (later): multi-region, silo VPCs, AI plane, HTTPS/PrivateLink, real au
 | `provisioner.py` | Orchestrates identity + migrate refresh + Helm onboard; does not invent ACTIVE from a namespace |
 | `aws_identity.py` | Create/delete SM secret + IRSA role (IAM then secret; lab force-delete); AWS throttling is retried |
 | `lifecycle.py` | Suspend / resume / fail-closed delete |
-| `observe.py` | Actual namespace / deploy / Ingress (namespace-only is not ACTIVE) |
-| `reconcile.py` | Desired vs observed; `POST /reconcile` and `cli.py reconcile` |
+| `observe.py` | Observed infrastructure (ns, deploy, Ingress, Service, NetPol, Quota, IRSA SA) — not full isolation QA |
+| `contract_check.py` | `validate_active_contract()` gate before registry `ACTIVE` (presence + CP identity pointers) |
+| `reconcile.py` | Desired vs observed; `SUSPENDED→resume`, `FAILED/DRIFT→repair`; `POST /reconcile` / `cli.py reconcile` |
 | `pg_admin.py` | Job: `ALTER ROLE NOLOGIN` + password rotate + `DROP ROLE` |
 | `adopt.py` | Mark existing AWS identity as CP-owned |
 | `store.py` | SQLite registry (`data/tenants.db`); imports legacy `tenants.json` once |
@@ -86,12 +98,16 @@ desired_status: ACTIVE | SUSPENDED | GONE
    ↓
 Reconciler
    ↓
-K8s + IAM + Secrets + DB
+observe infrastructure (ns / deploy / Ingress / Service / NetPol / Quota / IRSA SA)
    ↓
-Observed (namespace + Ready deploy + replicas + Ingress)
+plan: provision | resume (SUSPENDED only) | repair (FAILED/DRIFT) | suspend | delete
+   ↓
+validate_active_contract (cheap gate) → registry ACTIVE
+   ↓
+Full isolation proof: pytest suite (RLS, authz, east-west, …)
 ```
 
-A `tenant-*` namespace with no Ready workload and no Ingress is **drift**, not ACTIVE.
+`matches_active()` is **observed infrastructure**, not the tenant contract. A Ready Deployment + Ingress without NetPol/Quota/IRSA SA is **DRIFT**, not ACTIVE. Namespace-only is never ACTIVE.
 
 ### Provisioning flow
 

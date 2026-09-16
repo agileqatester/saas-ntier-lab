@@ -1,4 +1,10 @@
-"""Observe actual tenant resources (K8s). AWS identity is optional."""
+"""Observe actual tenant infrastructure (K8s). Not the full isolation contract.
+
+`matches_active()` means the *observed* workload edge looks up (ns, deploy,
+replicas, Ingress, Service, NetPol, Quota, IRSA SA). That is necessary but not
+sufficient for contract ACTIVE — see `validate_active_contract` in
+`contract_check.py` and `tests/contracts/tenant_contract.md`.
+"""
 
 from __future__ import annotations
 
@@ -14,11 +20,25 @@ class Observed:
     deploy_ready: bool = False
     replicas: int = 0
     ingress: bool = False
+    service: bool = False
+    network_policy: bool = False
+    resource_quota: bool = False
+    irsa_sa: bool = False
     secret: bool | None = None
     irsa: bool | None = None
 
     def matches_active(self) -> bool:
-        return self.namespace and self.deploy_ready and self.replicas >= 1 and self.ingress
+        """Infrastructure looks like a live product edge — not full isolation QA."""
+        return (
+            self.namespace
+            and self.deploy_ready
+            and self.replicas >= 1
+            and self.ingress
+            and self.service
+            and self.network_policy
+            and self.resource_quota
+            and self.irsa_sa
+        )
 
     def matches_suspended(self) -> bool:
         return self.namespace and self.replicas == 0 and not self.ingress
@@ -67,9 +87,25 @@ class KubectlObserver:
             replicas = spec
             ready = spec >= 1 and ready_n >= 1
         ingress = _kubectl_json(["-n", ns, "get", "ingress", "test-app"]) is not None
+        service = _kubectl_json(["-n", ns, "get", "svc", "test-app"]) is not None
+        network_policy = _kubectl_json(["-n", ns, "get", "networkpolicy", "test-app"]) is not None
+        resource_quota = (
+            _kubectl_json(["-n", ns, "get", "resourcequota", "test-app-quota"]) is not None
+        )
+        sa = _kubectl_json(["-n", ns, "get", "sa", "test-app"])
+        irsa_sa = bool(
+            sa
+            and ((sa.get("metadata") or {}).get("annotations") or {}).get(
+                "eks.amazonaws.com/role-arn"
+            )
+        )
         return Observed(
             namespace=True,
             deploy_ready=ready,
             replicas=replicas,
             ingress=ingress,
+            service=service,
+            network_policy=network_policy,
+            resource_quota=resource_quota,
+            irsa_sa=irsa_sa,
         )

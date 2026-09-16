@@ -39,15 +39,27 @@ pytest -v isolation/test_database.py
 pytest -v isolation/test_network.py isolation/test_iam.py isolation/test_compute.py isolation/test_ingress_guardrails.py
 ```
 
+CI (`.github/workflows/python-unit.yml`) runs `pytest -m unit` on changes to
+`control-plane/`, `helm/`, and `tests/` — no live cluster. Isolation suites stay
+manual / `workflow_dispatch` against a real EKS lab.
+
 Live isolation tests need a Helm/control-plane re-onboard so tenants pick up egress NetworkPolicy, tenant RBAC, and `platform-guardrails` VAP (plus lab-user auth).
 
-**Last recorded result (shared Ingress edge):** **23 passed** (isolation + smoke, before lab-user authorization). Re-run after Helm upgrade; expect additional unit + authorization tests.
+### Current verification (2026-09-16)
+
+| Suite | Result |
+|-------|--------|
+| Unit + CP contract (`pytest -m unit`) | **72 passed** (CI: `.github/workflows/python-unit.yml`) |
+| Collected total | **108** tests |
+| Live isolation + smoke | Re-run on lab; historical Phase A live headline was **23 passed** (before authz/guardrails/CP units) |
+
+Keep the 23-pass rows in [`docs/saas/VERIFICATION.md`](../docs/saas/VERIFICATION.md) as evolution history.
 
 ## Suite map
 
 | Area | Files | Asserts |
 |------|-------|---------|
-| Unit | `unit/test_lab_auth.py`, `unit/test_cp_*.py`, `unit/test_sqlite_store.py`, `unit/test_tenant_id.py`, `unit/test_reconcile_plan.py`, `unit/test_platform_guardrails.py` | authz map, CP bind/delete invariants, SQLite registry, shared tenant-id, reconciler plan, VAP + egress templates |
+| Unit | `unit/test_lab_auth.py`, `unit/test_cp_*.py`, `unit/test_sqlite_store.py`, `unit/test_tenant_id.py`, `unit/test_reconcile_plan.py`, `unit/test_contract_check.py`, `unit/test_platform_guardrails.py` | authz map, CP bind/delete invariants, SQLite registry, shared tenant-id, reconciler plan + ACTIVE contract gate, VAP + egress templates |
 | CP contract | `control_plane/test_contract.py` | CREATE/SUSPEND/RESUME/DELETE + failure injection (fakes; no cluster) |
 | Smoke | `smoke/test_tenants.py` | ns, Ready, `/health`, DB |
 | Authz | `isolation/test_authorization.py` | user→own tenant OK; cross-tenant 403; header ≠ DB tenant |

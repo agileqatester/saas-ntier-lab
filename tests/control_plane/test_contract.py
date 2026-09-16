@@ -36,11 +36,18 @@ class FakeWorld:
             raise PermanentProvisioningError(f"injected {step}")
 
     def observe(self, tenant_id: str, item: dict) -> Observed:
+        ns = tenant_id in self.namespaces
+        replicas = self.replicas.get(tenant_id, 0)
         return Observed(
-            namespace=tenant_id in self.namespaces,
-            deploy_ready=self.replicas.get(tenant_id, 0) >= 1,
-            replicas=self.replicas.get(tenant_id, 0),
+            namespace=ns,
+            deploy_ready=replicas >= 1,
+            replicas=replicas,
             ingress=tenant_id in self.ingress,
+            # Helm onboard installs these with the namespace in the real cluster.
+            service=ns,
+            network_policy=ns,
+            resource_quota=ns,
+            irsa_sa=tenant_id in self.irsa,
             secret=tenant_id in self.secrets,
             irsa=tenant_id in self.irsa,
         )
@@ -64,6 +71,7 @@ class FakeWorld:
             tenant_id,
             desired_status="ACTIVE",
             status="ACTIVE",
+            owned_by="control_plane",
             secret_name=f"secret/{tenant_id}",
             irsa_role_arn=f"arn:role/{tenant_id}",
             error=None,
