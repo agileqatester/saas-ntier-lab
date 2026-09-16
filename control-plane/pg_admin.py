@@ -16,6 +16,8 @@ _DROP_SCRIPT = textwrap.dedent(
     """\
     import json
     import os
+    import secrets
+    import string
     import boto3
     import psycopg2
     from psycopg2 import sql
@@ -37,6 +39,12 @@ _DROP_SCRIPT = textwrap.dedent(
     cur.execute(sql.SQL("DROP POLICY IF EXISTS {} ON sample_requests").format(sql.Identifier(pol)))
     cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
     if cur.fetchone():
+        # Disable login first so a failed DROP still leaves a non-usable role.
+        # Rotating the password invalidates any copy of the old secret.
+        pw = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(24))
+        cur.execute(sql.SQL("ALTER ROLE {} NOLOGIN").format(sql.Identifier(role)))
+        cur.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(pw)))
+        print(json.dumps({"msg": "revoked", "role": role}), flush=True)
         # Tenant roles only have GRANTs (table owned by master) — revoke then drop.
         cur.execute(sql.SQL("REVOKE ALL ON TABLE sample_requests FROM {}").format(sql.Identifier(role)))
         cur.execute(sql.SQL("REVOKE ALL ON SEQUENCE sample_requests_id_seq FROM {}").format(sql.Identifier(role)))

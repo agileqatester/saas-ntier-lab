@@ -17,6 +17,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "smoke: environment readiness")
     config.addinivalue_line("markers", "isolation: tenant isolation contracts")
     config.addinivalue_line("markers", "requires_cluster: needs kubectl + deployed tenants")
+    config.addinivalue_line("markers", "unit: no cluster required")
 
 
 @pytest.fixture(scope="session")
@@ -72,6 +73,7 @@ def _make_tenant(
         secret_name=secret,
         service_dns=f"test-app.{raw['namespace']}.svc.cluster.local",
         service_port=8080,
+        lab_user=str(raw.get("lab_user") or ""),
     )
 
 

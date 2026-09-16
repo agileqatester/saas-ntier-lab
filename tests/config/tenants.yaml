@@ -14,8 +14,10 @@ tenants:
     namespace: tenant-a
     path_prefix: /tenant-a
     secret_name: ntier-dev/rds/tenant-a
+    lab_user: user-a
   tenant-b:
     id: b
     namespace: tenant-b
     path_prefix: /tenant-b
     secret_name: ntier-dev/rds/tenant-b
+    lab_user: user-b

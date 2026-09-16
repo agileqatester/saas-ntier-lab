@@ -11,6 +11,11 @@ data "aws_subnet" "public" {
   id       = each.value
 }
 
+data "aws_subnet" "private" {
+  for_each = toset(data.terraform_remote_state.network.outputs.private_subnet_ids)
+  id       = each.value
+}
+
 module "nat" {
   source = "../../../modules/nat"
 

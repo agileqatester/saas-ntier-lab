@@ -25,10 +25,35 @@ import sys
 import time
 
 CHART_DIR = os.path.dirname(os.path.abspath(__file__))
+GUARDRAILS_CHART = os.path.join(os.path.dirname(CHART_DIR), "platform-guardrails")
 
 
 class OnboardError(Exception):
     """Raised when onboard cannot proceed (missing tofu outputs, kubectl, etc.)."""
+
+
+def ensure_platform_guardrails(outputs: dict) -> None:
+    """Install ValidatingAdmissionPolicy for the shared ALB Ingress group.
+
+    group.name is a cluster-wide trust boundary: a tenant namespace must not
+    be able to join a different ALB group or an unexpected IngressClass.
+    """
+    group = outputs.get("alb_ingress_group") or outputs.get("name_prefix") or "ntier-dev"
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            "platform-guardrails",
+            GUARDRAILS_CHART,
+            "-n",
+            "kube-system",
+            "--set",
+            f"groupName={group}",
+            "--set",
+            "ingressClass=alb",
+        ]
+    )
 
 
 def run(cmd: list[str], **kwargs) -> None:
@@ -154,6 +179,7 @@ def onboard(
     path_prefix = f"/tenant-{tenant}"
 
     if mode == "alb_controller":
+        ensure_platform_guardrails(outputs)
         pub_cidrs = outputs.get("public_subnet_cidrs") or []
         if not pub_cidrs:
             raise OnboardError(
@@ -162,6 +188,7 @@ def onboard(
         my_ip = os.environ.get("MY_IP") or outputs.get("my_ip_cidr") or ""
         inbound = [c for c in [my_ip] if c]
         np_cidrs = list(pub_cidrs)
+        pg_cidrs = list(outputs.get("private_subnet_cidrs") or [])
         group = outputs.get("alb_ingress_group") or outputs.get("name_prefix") or "ntier-dev"
         try:
             order = str((tenant_ids.index(tenant) + 1) * 10)
@@ -181,6 +208,10 @@ def onboard(
             f"ingress.inboundCidrs={json.dumps(inbound)}",
             "--set-json",
             f"networkPolicy.ingressCidrs={json.dumps(np_cidrs)}",
+            "--set",
+            "networkPolicy.egress.enabled=true",
+            "--set-json",
+            f"networkPolicy.egress.postgresCidrs={json.dumps(pg_cidrs)}",
         ]
         if logs_bucket:
             edge_sets += ["--set", f"ingress.accessLogsBucket={logs_bucket}"]
@@ -357,12 +388,16 @@ def main() -> int:
         try:
             from pathlib import Path
 
-            reg = Path(__file__).resolve().parents[2] / "control-plane" / "data" / "tenants.json"
-            if reg.exists():
-                import json as _json
+            cp = Path(__file__).resolve().parents[2] / "control-plane"
+            sys.path.insert(0, str(cp))
+            from store import TenantStore
 
-                raw = _json.loads(reg.read_text())
-                for tid, meta in (raw.get("tenants") or {}).items():
+            db = cp / "data" / "tenants.db"
+            if db.exists():
+                for meta in TenantStore(db).list():
+                    tid = meta.get("id")
+                    if not tid:
+                        continue
                     if meta.get("irsa_role_arn"):
                         irsa[tid] = meta["irsa_role_arn"]
                     if meta.get("secret_name"):

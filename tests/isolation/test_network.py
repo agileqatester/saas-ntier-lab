@@ -3,6 +3,7 @@
 Contract:
 - Tenant can reach its own Service
 - Tenant cannot reach another tenant's Service (Ingress NetworkPolicy)
+- Arbitrary internet TCP/80 is denied (egress default-deny)
 """
 
 from __future__ import annotations
@@ -35,6 +36,25 @@ def test_tenant_a_cannot_reach_tenant_b(tenant_a: Tenant, tenant_b: Tenant) -> N
     )
     result = tenant_a.exec_python(code, timeout=20)
     assert result.failed, f"cross-tenant connect should fail, got: {result.stdout}"
+
+
+def test_egress_to_internet_http_is_denied(tenant_a: Tenant) -> None:
+    """Default-deny egress: DNS/Postgres/HTTPS may be allowed; arbitrary :80 is not."""
+    code = (
+        "import socket\n"
+        "s = socket.socket()\n"
+        "s.settimeout(3)\n"
+        "try:\n"
+        "    s.connect(('1.1.1.1', 80))\n"
+        "    print('OPEN')\n"
+        "except Exception:\n"
+        "    print('DENIED')\n"
+        "finally:\n"
+        "    s.close()\n"
+    )
+    result = tenant_a.exec_python(code, timeout=20)
+    assert result.success, result.stderr or result.stdout
+    assert "DENIED" in result.stdout
 
 
 def test_tenant_b_cannot_reach_tenant_a(tenant_a: Tenant, tenant_b: Tenant) -> None:

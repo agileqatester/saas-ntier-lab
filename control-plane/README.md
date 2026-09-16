@@ -27,7 +27,8 @@ control-plane/.venv/bin/python control-plane/cli.py create g
 control-plane/.venv/bin/python control-plane/cli.py list
 control-plane/.venv/bin/python control-plane/cli.py suspend g
 control-plane/.venv/bin/python control-plane/cli.py resume g
-control-plane/.venv/bin/python control-plane/cli.py delete g       # ns + SM + IRSA + DROP ROLE
+control-plane/.venv/bin/python control-plane/cli.py delete g       # retry-safe; DELETE_FAILED if DB revoke fails
+control-plane/.venv/bin/python control-plane/cli.py reconcile g    # desired vs actual; does not auto-ACTIVE namespaces
 control-plane/.venv/bin/python control-plane/cli.py get g
 ```
 
@@ -35,8 +36,15 @@ control-plane/.venv/bin/python control-plane/cli.py get g
 
 ## HTTP API
 
+Lab default: `CP_HOST=127.0.0.1` — no token. **Non-loopback bind is refused** unless
+`CP_API_TOKEN` is set. That is a static Bearer token, not OIDC.
+
 ```bash
-control-plane/.venv/bin/python control-plane/app.py   # :8088
+control-plane/.venv/bin/python control-plane/app.py   # :8088 on 127.0.0.1
+
+# Non-loopback (still a lab token, not production IdP):
+# export CP_HOST=0.0.0.0 CP_API_TOKEN='…'
+# curl -H "Authorization: Bearer $CP_API_TOKEN" …
 
 curl -sS -X POST http://127.0.0.1:8088/tenants \
   -H 'Content-Type: application/json' -d '{"id":"g","tier":"standard"}'
@@ -44,31 +52,41 @@ curl -sS http://127.0.0.1:8088/tenants/g
 curl -sS -X POST http://127.0.0.1:8088/tenants/g/suspend
 curl -sS -X POST http://127.0.0.1:8088/tenants/g/resume
 curl -sS -X DELETE http://127.0.0.1:8088/tenants/g
+curl -sS -X POST http://127.0.0.1:8088/tenants/g/reconcile
+# DELETE is fail-closed: if DROP ROLE fails, status is DELETE_FAILED — retry delete.
 ```
 
 ## How it works
 
 1. **Identity** (`aws_identity.py`): create/delete `name_prefix/rds/tenant-<id>` secret and `name_prefix-tenant-<id>` IRSA role (OIDC from tofu outputs).
 2. **Migrate refresh**: re-run the platform tenant (`a`) migrate Job so Postgres gets `CREATE ROLE` + RLS policy for the new secret map.
-3. **Onboard** (`onboard_tenant.onboard`): namespace, NetworkPolicy (public subnet CIDRs), ResourceQuota, Helm ClusterIP + Ingress (`alb` class, shared `group.name`).
-4. **Lifecycle** (`lifecycle.py` + `pg_admin.py`): suspend/resume; delete drops PG role via Job in `tenant-a` (migrator IRSA), then Helm/ns/AWS identity.
-5. **Registry**: `control-plane/data/tenants.json` (gitignored). Reloaded on read so CLI and API stay in sync.
+3. **Onboard** (`onboard_tenant.onboard`): namespace, NetworkPolicy (ingress + default-deny egress), ResourceQuota, Helm ClusterIP + Ingress (`alb` class, shared `group.name`), platform-guardrails VAP.
+4. **Lifecycle** (`lifecycle.py` + `pg_admin.py`): suspend/resume; delete disables access, revokes the Postgres role (`NOLOGIN` + password rotate + `DROP ROLE` with retries), then Helm/ns, then IRSA, then the secret. DB revoke failure → `DELETE_FAILED` (retryable); Kubernetes/AWS identity are not removed while the role still exists.
+5. **Registry**: `control-plane/data/tenants.db` (SQLite WAL, gitignored). CLI and Flask share the same file with transactions and optimistic `version` concurrency. Legacy `tenants.json` is imported once if the DB is empty. Multi-instance production should move this table to DynamoDB or PostgreSQL.
+6. **Reconcile**: commands set `desired_status` (`ACTIVE` / `SUSPENDED` / `GONE`). `cli.py reconcile` (or `POST /reconcile`) compares observed K8s against that desired state. A namespace existing is **not** ACTIVE.
 
 Legacy escape hatch: `POST` with `"ensure_infra": true` still edits tfvars + `tofu apply` (`infra.py`).
+
+Lab secret teardown uses `ForceDeleteWithoutRecovery`. Set `CP_SECRET_RECOVERY_DAYS=7` (7–30) for a recovery window. That still does not revoke a leaked DB password — the role does.
 
 ## Layout
 
 ```
 control-plane/
-  app.py            # Flask API
+  app.py            # Flask API (loopback by default; CP_API_TOKEN if not)
   cli.py            # CLI entry
+  safety.py         # bind guard + Bearer check + secret recovery window
   provisioner.py    # create orchestration
-  lifecycle.py      # suspend / resume / delete
+  lifecycle.py      # suspend / resume / delete (fail-closed)
   aws_identity.py   # SM + IRSA
-  pg_admin.py       # DROP ROLE Job
+  pg_admin.py       # revoke/DROP ROLE Job
+  errors.py         # typed errors + with_retry (AWS/K8s throttling)
+  ids.py            # validate_tenant_id() — API, CLI, provisioner, lifecycle, IAM
+  observe.py        # actual namespace/deploy/ingress (does not invent ACTIVE)
+  reconcile.py      # desired vs observed
   adopt.py          # adopt existing AWS identity
-  store.py          # tenants.json registry
+  store.py          # SQLite tenants.db (WAL + version)
   infra.py          # legacy tofu ensure_infra
   requirements.txt
-  data/             # gitignored runtime state
+  data/             # gitignored runtime state (tenants.db; optional tenants.json import)
 ```

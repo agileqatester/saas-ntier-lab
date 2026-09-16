@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform-guardrails
+description: Cluster policies for the shared ALB Ingress group (tenant namespaces)
+type: application
+version: 0.1.0
+appVersion: "1.0"

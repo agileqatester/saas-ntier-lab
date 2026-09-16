@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import traceback
 from pathlib import Path
 
+from errors import ControlPlaneError, PermanentProvisioningError
+from ids import validate_tenant_id
 from aws_identity import ensure_tenant_identity, merge_identity_maps
 from infra import ensure_infra
 from onboard_bridge import OnboardError, node_ip, onboard, require, tofu_outputs, wait_ingress_hostname, write_alb_url
@@ -30,45 +31,17 @@ def _cp_identities(store: TenantStore) -> dict:
     return out
 
 
-def discover_active(store: TenantStore, tofu_dir: Path) -> None:
-    """Seed registry from live namespaces (tofu + control-plane tenants)."""
-    try:
-        outputs = tofu_outputs(str(tofu_dir))
-        alb = (outputs.get("alb_url") or "").rstrip("/")
-        if not alb:
-            try:
-                alb = (tofu_dir / ".alb_url").read_text().strip()
-            except OSError:
-                alb = ""
-    except Exception as exc:  # noqa: BLE001
-        print(f"discover skip: {exc}", file=sys.stderr)
-        return
+def discover_active(store: TenantStore, tofu_dir: Path) -> dict:
+    """List registry + tenant-* namespaces not in the registry.
 
-    raw = subprocess.run(
-        ["kubectl", "get", "ns", "-o", "jsonpath={.items[*].metadata.name}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    names = raw.stdout.split()
-    for name in names:
-        if not name.startswith("tenant-"):
-            continue
-        tid = name.removeprefix("tenant-")
-        existing = store.get(tid)
-        if existing and existing.get("status") == "PROVISIONING":
-            continue
-        store.upsert(
-            tid,
-            status="ACTIVE",
-            tier=(existing or {}).get("tier", "standard"),
-            endpoint=f"{alb}/tenant-{tid}" if alb else None,
-            path_prefix=f"/tenant-{tid}",
-            owned_by=(existing or {}).get("owned_by"),
-            secret_name=(existing or {}).get("secret_name"),
-            irsa_role_arn=(existing or {}).get("irsa_role_arn"),
-            error=None,
-        )
+    Does **not** promote a namespace to ACTIVE. Use `cli.py reconcile`.
+    """
+    from reconcile import list_unmanaged_namespaces
+
+    unmanaged = list_unmanaged_namespaces(store)
+    if unmanaged:
+        print(f"! unmanaged namespaces (not auto-ACTIVE): {unmanaged}", file=sys.stderr)
+    return {"tenants": store.list(), "unmanaged_namespaces": unmanaged}
 
 
 def provision(
@@ -81,8 +54,10 @@ def provision(
     ensure_identity_flag: bool = True,
     my_ip: str | None = None,
 ) -> None:
+    tenant_id = validate_tenant_id(tenant_id)
     store.upsert(
         tenant_id,
+        desired_status="ACTIVE",
         status="PROVISIONING",
         tier=tier,
         error=None,
@@ -117,6 +92,7 @@ def provision(
 
         store.upsert(
             tenant_id,
+            desired_status="ACTIVE",
             status="PROVISIONING",
             tier=tier,
             owned_by=identity.get("owned_by"),
@@ -159,6 +135,7 @@ def provision(
 
         store.upsert(
             tenant_id,
+            desired_status="ACTIVE",
             status="ACTIVE",
             tier=tier,
             endpoint=f"{alb}/tenant-{tenant_id}" if alb else None,
@@ -168,11 +145,23 @@ def provision(
             irsa_role_arn=identity.get("irsa_role_arn"),
             error=None,
         )
-    except Exception as exc:  # noqa: BLE001
+    except ControlPlaneError as exc:
         traceback.print_exc()
         store.upsert(
             tenant_id,
+            desired_status="ACTIVE",
             status="FAILED",
             tier=tier,
             error=str(exc),
         )
+        raise
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        store.upsert(
+            tenant_id,
+            desired_status="ACTIVE",
+            status="FAILED",
+            tier=tier,
+            error=str(exc),
+        )
+        raise PermanentProvisioningError(str(exc)) from exc

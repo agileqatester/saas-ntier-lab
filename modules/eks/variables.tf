@@ -37,7 +37,7 @@ variable "jumpbox_security_group_id" {
 }
 
 variable "endpoint_public_access" {
-  description = "Expose the Kubernetes API on a public endpoint (restricted by api_allowed_cidrs)"
+  description = "Dev: public EKS API restricted to api_allowed_cidrs (your /32). Workloads stay private. Set false for private-only API (no internet path to kube-apiserver)."
   type        = bool
   default     = true
 }

@@ -11,7 +11,10 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
+from errors import classify_aws_error, with_retry
+from ids import validate_tenant_id
 from onboard_bridge import OnboardError
+from safety import secret_recovery_window_days
 
 
 def _password(length: int = 20) -> str:
@@ -31,7 +34,25 @@ def _sts(region: str):
     return boto3.client("sts", region_name=region)
 
 
+def _raise_aws(exc: ClientError) -> None:
+    err = exc.response.get("Error") or {}
+    raise classify_aws_error(str(err.get("Code") or "Unknown"), str(err.get("Message") or exc)) from exc
+
+
 def ensure_tenant_identity(outputs: dict, tenant_id: str) -> dict[str, str]:
+    tenant_id = validate_tenant_id(tenant_id)
+
+    def _op() -> dict[str, str]:
+        try:
+            return _ensure_tenant_identity(outputs, tenant_id)
+        except ClientError as exc:
+            _raise_aws(exc)
+            raise
+
+    return with_retry(_op)
+
+
+def _ensure_tenant_identity(outputs: dict, tenant_id: str) -> dict[str, str]:
     """Idempotently create SM secret + IRSA role for tenant_id.
 
     Returns {"secret_name", "irsa_role_arn", "owned_by": "control_plane"}.
@@ -193,30 +214,19 @@ def merge_identity_maps(
     return ids, irsa, secrets
 
 
-def delete_tenant_identity(
+def delete_tenant_irsa(
     outputs: dict,
     tenant_id: str,
     *,
-    secret_name: str | None = None,
     role_arn: str | None = None,
 ) -> None:
-    """Delete CP-owned SM secret + IRSA role. Idempotent if already gone."""
+    """Delete the tenant IRSA role. Idempotent if already gone."""
+    tenant_id = validate_tenant_id(tenant_id)
     region = outputs.get("aws_region") or "us-east-1"
     prefix = outputs.get("name_prefix") or "ntier-dev"
-    secret_name = secret_name or f"{prefix}/rds/tenant-{tenant_id}"
     role_name = f"{prefix}-tenant-{tenant_id}"
     if role_arn and role_arn.startswith("arn:"):
         role_name = role_arn.rsplit("/", 1)[-1]
-
-    sm = _sm(region)
-    try:
-        sm.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-        print(f"+ deleted secret {secret_name}", file=sys.stderr)
-    except ClientError as exc:
-        code = exc.response["Error"]["Code"]
-        if code not in ("ResourceNotFoundException", "InvalidRequestException"):
-            raise
-        print(f"+ secret {secret_name} already gone ({code})", file=sys.stderr)
 
     iam = _iam(region)
     policy_name = f"{prefix}-tenant-{tenant_id}-secrets"
@@ -224,11 +234,56 @@ def delete_tenant_identity(
         iam.delete_role_policy(RoleName=role_name, PolicyName=policy_name)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "NoSuchEntity":
-            raise
+            _raise_aws(exc)
     try:
         iam.delete_role(RoleName=role_name)
         print(f"+ deleted IRSA role {role_name}", file=sys.stderr)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "NoSuchEntity":
-            raise
+            _raise_aws(exc)
         print(f"+ IRSA role {role_name} already gone", file=sys.stderr)
+
+
+def delete_tenant_secret(
+    outputs: dict,
+    tenant_id: str,
+    *,
+    secret_name: str | None = None,
+) -> None:
+    """Delete the tenant secret. Lab default is force-delete; production should use a recovery window.
+
+    This does not revoke a live DB password. Disable/DROP the Postgres role first.
+    """
+    tenant_id = validate_tenant_id(tenant_id)
+    region = outputs.get("aws_region") or "us-east-1"
+    prefix = outputs.get("name_prefix") or "ntier-dev"
+    secret_name = secret_name or f"{prefix}/rds/tenant-{tenant_id}"
+    sm = _sm(region)
+    try:
+        days = secret_recovery_window_days()
+        if days:
+            sm.delete_secret(SecretId=secret_name, RecoveryWindowInDays=days)
+            print(f"+ scheduled secret delete {secret_name} (recovery {days}d)", file=sys.stderr)
+        else:
+            sm.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
+            print(f"+ force-deleted secret {secret_name} (lab)", file=sys.stderr)
+    except ClientError as exc:
+        code = exc.response["Error"]["Code"]
+        if code not in ("ResourceNotFoundException", "InvalidRequestException"):
+            _raise_aws(exc)
+        print(f"+ secret {secret_name} already gone ({code})", file=sys.stderr)
+
+
+def delete_tenant_identity(
+    outputs: dict,
+    tenant_id: str,
+    *,
+    secret_name: str | None = None,
+    role_arn: str | None = None,
+) -> None:
+    """Delete CP-owned IRSA then SM secret. Idempotent if already gone.
+
+    Order: IAM first (workload can no longer read the secret), then the secret.
+    """
+    delete_tenant_irsa(outputs, tenant_id, role_arn=role_arn)
+    delete_tenant_secret(outputs, tenant_id, secret_name=secret_name)

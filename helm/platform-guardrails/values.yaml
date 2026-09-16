@@ -1,0 +1,6 @@
+# Shared ALB group.name is a trust boundary. Only Ingress objects that
+# match these values may join the group (enforced by ValidatingAdmissionPolicy).
+ingressClass: alb
+groupName: ntier-dev
+# Namespaces with this label (set by the control plane on tenant-*) are in scope.
+tenantLabelKey: tenant

@@ -66,8 +66,10 @@ resource "aws_eks_cluster" "this" {
     subnet_ids              = var.private_subnet_ids
     endpoint_private_access = true
     endpoint_public_access  = var.endpoint_public_access
-    public_access_cidrs     = var.endpoint_public_access ? var.api_allowed_cidrs : null
-    security_group_ids      = [aws_security_group.eks.id]
+    # Dev default is public+private with api_allowed_cidrs (your /32), not private-only.
+    # Never leave public API as 0.0.0.0/0 — callers must pass api_allowed_cidrs (Dev: var.my_ip /32).
+    public_access_cidrs = var.endpoint_public_access ? var.api_allowed_cidrs : null
+    security_group_ids  = [aws_security_group.eks.id]
   }
 
   depends_on = [
@@ -126,9 +128,10 @@ resource "aws_launch_template" "eks_nodes" {
   description = "Name tag for EKS managed nodes"
 
   metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+    # Hop 1: pods on the node cannot reach IMDS (blocks node-role credential theft via SSRF).
+    http_put_response_hop_limit = 1
   }
 
   tag_specifications {
@@ -217,6 +220,15 @@ resource "aws_security_group_rule" "jumpbox_to_eks_api" {
 # Cluster ownership tag. Role/elb tags live on the VPC subnets (do not set them twice).
 resource "aws_ec2_tag" "private_cluster" {
   for_each = toset(var.private_subnet_ids)
+
+  resource_id = each.value
+  key         = "kubernetes.io/cluster/${aws_eks_cluster.this.name}"
+  value       = "shared"
+}
+
+# Required for internet-facing ALBs (aws-load-balancer-controller subnet discovery).
+resource "aws_ec2_tag" "public_cluster" {
+  for_each = toset(var.public_subnet_ids)
 
   resource_id = each.value
   key         = "kubernetes.io/cluster/${aws_eks_cluster.this.name}"

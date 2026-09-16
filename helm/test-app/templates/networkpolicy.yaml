@@ -7,11 +7,12 @@ metadata:
     {{- include "test-app.labels" . | nindent 4 }}
     tenant: {{ .Values.tenant.id | quote }}
 spec:
-  podSelector:
-    matchLabels:
-      {{- include "test-app.selectorLabels" . | nindent 6 }}
+  podSelector: {}
   policyTypes:
     - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         - podSelector: {}
@@ -26,4 +27,44 @@ spec:
         - protocol: TCP
           port: {{ $.Values.service.port }}
     {{- end }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # Same-namespace (own ClusterIP / migrate Job).
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+    # CoreDNS (EKS labels kube-dns on the CoreDNS pods).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- range .Values.networkPolicy.egress.postgresCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.egress.postgresPort }}
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.allowInternetHttps }}
+    # Lab: pip + STS/Secrets Manager via NAT. Production should replace this
+    # with interface VPC endpoints only (no 0.0.0.0/0).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+  {{- end }}
 {{- end }}

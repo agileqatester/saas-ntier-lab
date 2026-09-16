@@ -7,6 +7,8 @@
   python control-plane/cli.py suspend g
   python control-plane/cli.py resume g
   python control-plane/cli.py delete g
+  python control-plane/cli.py reconcile
+  python control-plane/cli.py reconcile g
   python control-plane/cli.py get g
   python control-plane/cli.py list
 """
@@ -39,13 +41,16 @@ except ModuleNotFoundError:
     raise SystemExit(1)
 
 from adopt import adopt_tenants
+from errors import ControlPlaneError, ValidationError
+from ids import validate_tenant_id
 from lifecycle import delete_tenant, resume_tenant, suspend_tenant
 from provisioner import discover_active, provision
+from reconcile import reconcile_all, reconcile_one
 from store import TenantStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TOFU = REPO_ROOT / "env" / "dev" / "workload"
-DATA = Path(__file__).resolve().parent / "data" / "tenants.json"
+DATA = Path(__file__).resolve().parent / "data" / "tenants.db"
 
 
 def _tofu_dir(args: argparse.Namespace) -> Path:
@@ -64,8 +69,8 @@ def _wait(store: TenantStore, tid: str, want: set[str], timeout: int = 600) -> d
             return {"id": tid, "status": "GONE"}
         if item and item.get("status") in want:
             return item
-        if item and item.get("status") == "FAILED":
-            raise SystemExit(f"FAILED: {item.get('error')}")
+        if item and item.get("status") in ("FAILED", "DELETE_FAILED"):
+            raise SystemExit(f"{item.get('status')}: {item.get('error')}")
         time.sleep(3)
     raise SystemExit(f"timeout waiting for {tid} in {want}")
 
@@ -87,16 +92,31 @@ def main() -> int:
         p = sub.add_parser(name)
         p.add_argument("tenant")
 
+    p_rec = sub.add_parser("reconcile", help="Make actual match desired (drift)")
+    p_rec.add_argument("tenant", nargs="?", help="one id; omit to reconcile all")
+
     sub.add_parser("list")
-    sub.add_parser("discover", help="Seed registry from live namespaces")
+    sub.add_parser("discover", help="List registry + unmanaged tenant-* namespaces (no auto-ACTIVE)")
 
     args = parser.parse_args()
     store = _store()
     tofu = _tofu_dir(args)
 
+    def _id(raw: str) -> str:
+        try:
+            return validate_tenant_id(raw)
+        except ValidationError as exc:
+            raise SystemExit(str(exc)) from exc
+
     if args.cmd == "discover":
-        discover_active(store, tofu)
-        print(json.dumps({"tenants": store.list()}, indent=2))
+        print(json.dumps(discover_active(store, tofu), indent=2))
+        return 0
+
+    if args.cmd == "reconcile":
+        if args.tenant:
+            print(json.dumps(reconcile_one(store, tofu, _id(args.tenant)), indent=2, default=str))
+        else:
+            print(json.dumps(reconcile_all(store, tofu), indent=2, default=str))
         return 0
 
     if args.cmd == "adopt":
@@ -109,38 +129,55 @@ def main() -> int:
         return 0
 
     if args.cmd == "get":
-        item = store.get(args.tenant)
+        tid = _id(args.tenant)
+        item = store.get(tid)
         if not item:
-            print(json.dumps({"error": "not_found", "id": args.tenant}))
+            print(json.dumps({"error": "not_found", "id": tid}))
             return 1
         print(json.dumps(item, indent=2))
         return 0
 
     if args.cmd == "create":
-        provision(
-            store,
-            tofu,
-            args.tenant,
-            tier=args.tier,
-            ensure_infra_flag=args.ensure_infra,
-            ensure_identity_flag=not args.ensure_infra,
-            my_ip=os.environ.get("MY_IP"),
-        )
-        print(json.dumps(store.get(args.tenant), indent=2))
+        tid = _id(args.tenant)
+        try:
+            provision(
+                store,
+                tofu,
+                tid,
+                tier=args.tier,
+                ensure_infra_flag=args.ensure_infra,
+                ensure_identity_flag=not args.ensure_infra,
+                my_ip=os.environ.get("MY_IP"),
+            )
+        except ControlPlaneError as exc:
+            print(json.dumps(store.get(tid) or {"error": str(exc)}, indent=2))
+            return 1
+        print(json.dumps(store.get(tid), indent=2))
         return 0
 
     if args.cmd == "suspend":
-        print(json.dumps(suspend_tenant(store, args.tenant), indent=2))
+        print(json.dumps(suspend_tenant(store, _id(args.tenant)), indent=2))
         return 0
 
     if args.cmd == "resume":
-        resume_tenant(store, tofu, args.tenant)
-        print(json.dumps(store.get(args.tenant), indent=2))
+        tid = _id(args.tenant)
+        resume_tenant(store, tofu, tid)
+        print(json.dumps(store.get(tid), indent=2))
         return 0
 
     if args.cmd == "delete":
-        delete_tenant(store, tofu, args.tenant)
-        print(json.dumps({"id": args.tenant, "status": "GONE"}))
+        tid = _id(args.tenant)
+        try:
+            delete_tenant(store, tofu, tid)
+        except ControlPlaneError as exc:
+            item = store.get(tid) or {
+                "id": tid,
+                "status": "DELETE_FAILED",
+                "error": str(exc),
+            }
+            print(json.dumps(item, indent=2))
+            return 1
+        print(json.dumps({"id": tid, "status": "GONE"}))
         return 0
 
     return 1

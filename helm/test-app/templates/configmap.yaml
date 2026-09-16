@@ -6,6 +6,8 @@ metadata:
     {{- include "test-app.labels" . | nindent 4 }}
   # trivy:ignore:AVD-KSV-0109 - Python in a ConfigMap, not secrets.
 data:
+  lab_auth.py: |
+{{ .Files.Get "lab_auth.py" | nindent 4 }}
   app.py: |
     import os
     import json
@@ -14,6 +16,7 @@ data:
     import sys
     from contextlib import contextmanager
     from flask import Flask, request, jsonify
+    from lab_auth import LAB_USER_HEADER, authorize_lab_user, load_lab_users
 
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -36,6 +39,7 @@ data:
 
     DB_ENABLED = os.getenv("DB_ENABLED", "false").lower() == "true"
     TENANT_ID = os.getenv("TENANT_ID", "").strip()
+    LAB_USERS = load_lab_users(os.getenv("LAB_USER_MAP", ""))
 
     def log_event(**fields):
         payload = {"tenant_id": TENANT_ID or None}
@@ -46,6 +50,21 @@ data:
         if DB_ENABLED and not TENANT_ID:
             return jsonify({"error": "TENANT_ID is not set on this pod"}), 500
         return None
+
+    @app.before_request
+    def require_lab_user():
+        # Probes and ALB health checks stay unauthenticated.
+        if request.path == "/health":
+            return None
+        decision = authorize_lab_user(
+            user=request.headers.get(LAB_USER_HEADER),
+            tenant_id=TENANT_ID,
+            users=LAB_USERS,
+        )
+        if decision is None:
+            return None
+        status, body = decision
+        return jsonify(body), status
 
     if DB_ENABLED:
         import boto3
@@ -92,6 +111,7 @@ data:
                 conn.rollback()
                 if TENANT_ID:
                     with conn.cursor() as cur:
+                        # Pod identity only — never X-Lab-User or a client-supplied tenant_id.
                         cur.execute("SELECT set_config('app.tenant_id', %s, true)", (TENANT_ID,))
                 return conn
             except Exception as e:
@@ -123,7 +143,13 @@ data:
     @app.after_request
     def after_request(resp):
         if request.path != "/health":
-            log_event(msg="request", method=request.method, path=request.path, status=resp.status_code)
+            log_event(
+                msg="request",
+                method=request.method,
+                path=request.path,
+                status=resp.status_code,
+                lab_user=(request.headers.get(LAB_USER_HEADER) or "").strip() or None,
+            )
         return resp
 
     @app.route("/")

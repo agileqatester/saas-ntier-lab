@@ -36,6 +36,11 @@ output "public_subnet_cidrs" {
   value       = [for id in data.terraform_remote_state.network.outputs.public_subnet_ids : data.aws_subnet.public[id].cidr_block]
 }
 
+output "private_subnet_cidrs" {
+  description = "Private subnet CIDRs — NetworkPolicy egress allowlist for Postgres (RDS ENIs)."
+  value       = [for id in data.terraform_remote_state.network.outputs.private_subnet_ids : data.aws_subnet.private[id].cidr_block]
+}
+
 output "ingress_mode" {
   value = var.ingress_mode
 }

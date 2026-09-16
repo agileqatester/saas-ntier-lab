@@ -8,6 +8,8 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError
 
+from errors import ValidationError
+from ids import validate_tenant_id
 from onboard_bridge import OnboardError, tofu_outputs
 from store import TenantStore
 
@@ -62,6 +64,11 @@ def adopt_tenants(
     sm = boto3.client("secretsmanager", region_name=region)
     adopted = []
     for tid in ids:
+        try:
+            tid = validate_tenant_id(tid)
+        except ValidationError:
+            print(f"! skip {tid}: invalid tenant id", file=sys.stderr)
+            continue
         secret_name = f"{prefix}/rds/tenant-{tid}"
         role_name = f"{prefix}-tenant-{tid}"
         try:
@@ -101,6 +108,7 @@ def adopt_tenants(
         existing = store.get(tid) or {}
         item = store.upsert(
             tid,
+            desired_status=existing.get("desired_status") or "ACTIVE",
             status=existing.get("status") or "ACTIVE",
             tier=existing.get("tier") or "standard",
             owned_by="control_plane",

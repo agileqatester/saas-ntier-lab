@@ -1,0 +1,41 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenant-shared-alb-ingress
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  matchConditions:
+    - name: tenant-namespace
+      expression: "has(object.metadata.namespace) && object.metadata.namespace.startsWith('tenant-')"
+  validations:
+    - expression: "has(object.spec.ingressClassName) && object.spec.ingressClassName == '{{ .Values.ingressClass }}'"
+      message: "tenant Ingress must use ingressClassName {{ .Values.ingressClass }}"
+    - expression: >-
+        has(object.metadata.annotations) &&
+        'alb.ingress.kubernetes.io/group.name' in object.metadata.annotations &&
+        object.metadata.annotations['alb.ingress.kubernetes.io/group.name'] == '{{ .Values.groupName }}'
+      message: "tenant Ingress must join group.name={{ .Values.groupName }} (shared ALB trust boundary)"
+    - expression: >-
+        has(object.spec.rules) &&
+        object.spec.rules.all(rule,
+          has(rule.http) &&
+          rule.http.paths.all(p,
+            p.path == '/' + object.metadata.namespace ||
+            p.path.startsWith('/' + object.metadata.namespace + '/')
+          )
+        )
+      message: "tenant Ingress paths must be scoped to /{namespace} (this tenant only)"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenant-shared-alb-ingress
+spec:
+  policyName: tenant-shared-alb-ingress
+  validationActions: ["Deny"]

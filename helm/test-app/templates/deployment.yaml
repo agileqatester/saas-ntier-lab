@@ -66,6 +66,8 @@ spec:
               value: {{ .Values.tenant.id | quote }}
             - name: PATH_PREFIX
               value: {{ .Values.pathPrefix | quote }}
+            - name: LAB_USER_MAP
+              value: {{ .Values.labAuth.users | toJson | quote }}
           livenessProbe:
             httpGet:
               path: /health

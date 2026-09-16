@@ -11,6 +11,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: {{ .Values.ingress.targetType | quote }}
     alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.groupName | quote }}
     alb.ingress.kubernetes.io/group.order: {{ .Values.ingress.groupOrder | quote }}
+    ntier.dev/managed-by: tenant-control-plane
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
     alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath | quote }}
     alb.ingress.kubernetes.io/success-codes: "200"

@@ -1,0 +1,33 @@
+{{- if .Values.rbac.tenantLimited }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "test-app.fullname" . }}-tenant
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+    tenant: {{ .Values.tenant.id | quote }}
+rules:
+  # Shared ALB Ingress is created only by the control-plane Helm release.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "test-app.fullname" . }}-tenant
+  labels:
+    {{- include "test-app.labels" . | nindent 4 }}
+    tenant: {{ .Values.tenant.id | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "test-app.fullname" . }}-tenant
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "test-app.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

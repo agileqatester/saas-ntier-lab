@@ -7,6 +7,8 @@ import requests
 
 from lib import kubectl
 
+LAB_USER_HEADER = "X-Lab-User"
+
 
 @dataclass(frozen=True)
 class Tenant:
@@ -21,6 +23,7 @@ class Tenant:
     secret_name: str | None = None
     service_dns: str = ""
     service_port: int = 8080
+    lab_user: str = ""
 
     def url(self, path: str) -> str:
         prefix = self.path_prefix.rstrip("/")
@@ -28,13 +31,31 @@ class Tenant:
             path = "/" + path
         return f"{self.base_url.rstrip('/')}{prefix}{path}"
 
-    def get(self, path: str, **kwargs: Any) -> requests.Response:
-        kwargs.setdefault("timeout", self.timeout)
-        return requests.get(self.url(path), **kwargs)
+    def request(
+        self,
+        method: str,
+        path: str = "/",
+        *,
+        user: str | None = None,
+        **kwargs: Any,
+    ) -> requests.Response:
+        """HTTP call with simulated lab user (X-Lab-User).
 
-    def post(self, path: str, **kwargs: Any) -> requests.Response:
+        user=None → this tenant's default lab_user.
+        user=""   → omit the header (missing-user case).
+        """
         kwargs.setdefault("timeout", self.timeout)
-        return requests.post(self.url(path), **kwargs)
+        headers = dict(kwargs.pop("headers", None) or {})
+        chosen = self.lab_user if user is None else user
+        if chosen:
+            headers[LAB_USER_HEADER] = chosen
+        return requests.request(method.upper(), self.url(path), headers=headers, **kwargs)
+
+    def get(self, path: str, *, user: str | None = None, **kwargs: Any) -> requests.Response:
+        return self.request("GET", path, user=user, **kwargs)
+
+    def post(self, path: str, *, user: str | None = None, **kwargs: Any) -> requests.Response:
+        return self.request("POST", path, user=user, **kwargs)
 
     def exec_python(self, code: str, *, timeout: float = 60) -> kubectl.CmdResult:
         """Run Python in the app pod with the same PYTHONPATH as the Deployment."""

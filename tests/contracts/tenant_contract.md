@@ -16,7 +16,10 @@ A tenant id `T` is ACTIVE when:
 - Tenant can read/write **own** rows only
 - Tenant cannot read/write another tenant’s rows (API + DB)
 - Missing `app.tenant_id` yields **no** tenant rows (fail closed)
+- Lab user `X-Lab-User` may access only mapped tenants (401 missing/unknown, 403 cross-tenant); header is **not** a Postgres tenant switch
 - East-west: cannot reach another tenant’s Service
+- Tenant SA cannot create Ingress; wrong `group.name` / class / path is admission-denied
+- Egress default-deny except DNS, Postgres, same-namespace, and lab HTTPS
 - ResourceQuota bounds that tenant’s compute (noisy-neighbor)
 
 ## Not part of the contract (implementation details)
@@ -37,5 +40,6 @@ Verification log: [`docs/saas/VERIFICATION.md`](../../docs/saas/VERIFICATION.md)
 Scaling notes that still apply for ~100 tenants: cells / pod density, not
 NodePort-per-tenant. Host-based routing is Phase B.
 
-Lifecycle (`CREATE → ACTIVE → SUSPEND/RESUME → DELETE`) is exercised via the
-control plane CLI/API; ACTIVE isolation stays this contract’s pytest suite.
+Lifecycle (`CREATE → ACTIVE → SUSPEND/RESUME → DELETE`) is an automated
+Control Plane contract ([`control_plane_contract.md`](./control_plane_contract.md)).
+ACTIVE isolation stays this contract’s pytest suite.

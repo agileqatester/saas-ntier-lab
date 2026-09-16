@@ -46,6 +46,17 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Lab-only tenant authorization simulation. Not authentication.
+# X-Lab-User is checked here; Postgres tenant_id still comes from tenant.id.
+# Production should integrate an external OIDC/OAuth2 identity provider.
+labAuth:
+  users:
+    alice: ["a"]
+    bob: ["b"]
+    admin: ["a", "b"]
+    user-a: ["a"]
+    user-b: ["b"]
+
 # Pooled tenancy: set per Helm release. Not taken from the client.
 tenant:
   id: ""
@@ -67,6 +78,18 @@ networkPolicy:
   # ALB controller (target-type ip): public subnet CIDRs only (ALB ENIs),
   # not the VPC CIDR — otherwise tenant pods could reach each other.
   ingressCidrs: []
+  egress:
+    # Default deny egress when networkPolicy.enabled. Explicit allows only.
+    enabled: true
+    postgresPort: 5432
+    postgresCidrs: []
+    # Lab: pip at startup + STS/Secrets Manager through NAT.
+    # Production: bake the image and allow HTTPS only to interface VPCEs.
+    allowInternetHttps: true
+
+rbac:
+  # Tenant SA cannot create/update Ingress (shared ALB group.name trust boundary).
+  tenantLimited: true
 
 # Database configuration
 database:
